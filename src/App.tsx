@@ -19,10 +19,10 @@ const PLAYER_SPEED = 5;
 const MONSTER_SIZE = 28;
 const MONSTER_SPEED = 1.8;
 const PROJECTILE_SPEED = 10;
-const WORLD_SEED = 12345; // Minecraft-like seed
+const INITIAL_WORLD_SEED = Math.floor(Math.random() * 1000000); 
 
 type WeaponType = 'SWORD' | 'BOW' | 'GUN';
-type TileType = 'GRASS' | 'WALL' | 'MOUNTAIN' | 'BOSS_FLOOR' | 'WATER' | 'SAFE_ZONE';
+type TileType = 'GRASS' | 'WALL' | 'MOUNTAIN' | 'BOSS_FLOOR' | 'WATER' | 'SAFE_ZONE' | 'DESERT' | 'FOREST' | 'OCEAN' | 'SNOW' | 'LAVA' | 'JUNGLE' | 'BEACH' | 'RIVER';
 
 interface Item {
   id: number;
@@ -114,14 +114,71 @@ export default function App() {
 
   const [items, setItems] = useState<Item[]>([]);
 
+  // Improved deterministic noise function using a robust integer hash and Perlin-like gradients
+  // to eliminate circular patterns and ensure natural, varied terrain.
+  const getNoise = (x: number, y: number, s: number, scale: number = 0.005) => {
+    const hash = (px: number, py: number) => {
+      let h = Math.imul(px, 374761393) ^ Math.imul(py, 668265263) ^ Math.imul(s, 1274126177);
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      h = (h ^ (h >>> 16));
+      return (h >>> 0) / 4294967296;
+    };
+
+    const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+    const noise = (px: number, py: number) => {
+      const ix = Math.floor(px);
+      const iy = Math.floor(py);
+      const fx = px - ix;
+      const fy = py - iy;
+
+      const u = fade(fx);
+      const v = fade(fy);
+
+      const a = hash(ix, iy);
+      const b = hash(ix + 1, iy);
+      const c = hash(ix, iy + 1);
+      const d = hash(ix + 1, iy + 1);
+
+      return lerp(lerp(a, b, u), lerp(c, d, u), v);
+    };
+
+    // Multi-layered domain warping to break any geometric regularity
+    const qx = noise(x * scale * 0.4 + 1.2, y * scale * 0.4 + 0.8) * 15;
+    const qy = noise(x * scale * 0.4 + 5.2, y * scale * 0.4 + 1.3) * 15;
+    
+    const rx = noise((x + qx) * scale * 0.3 + 2.4, (y + qy) * scale * 0.3 + 1.7) * 10;
+    const ry = noise((x + qx) * scale * 0.3 + 9.1, (y + qy) * scale * 0.3 + 2.8) * 10;
+
+    const nx = (x + rx) * scale;
+    const ny = (y + ry) * scale;
+
+    let val = 0;
+    let amp = 1;
+    let freq = 1;
+    let totalAmp = 0;
+    
+    // 5 octaves for high detail
+    for (let i = 0; i < 5; i++) {
+      val += noise(nx * freq, ny * freq) * amp;
+      totalAmp += amp;
+      amp *= 0.5;
+      freq *= 2.1;
+    }
+    
+    return val / totalAmp;
+  };
+
   const getChunk = (cx: number, cy: number): TileType[][] => {
     const key = `${cx},${cy}`;
     if (chunksRef.current.has(key)) return chunksRef.current.get(key)!;
 
     // Generate new chunk
     const newChunk: TileType[][] = [];
-    // Deterministic seeded random based on chunk coords and WORLD_SEED
-    let s = Math.abs((cx * 73856093) ^ (cy * 19349663) ^ WORLD_SEED);
+    
+    // Seeded random for local details
+    let s = Math.abs((cx * 73856093) ^ (cy * 19349663) ^ INITIAL_WORLD_SEED);
     const seededRandom = () => {
       s = (s * 9301 + 49297) % 233280;
       return s / 233280;
@@ -135,7 +192,25 @@ export default function App() {
     for (let y = 0; y < CHUNK_SIZE; y++) {
       newChunk[y] = [];
       for (let x = 0; x < CHUNK_SIZE; x++) {
-        const rand = seededRandom();
+        const worldX = cx * CHUNK_SIZE + x;
+        const worldY = cy * CHUNK_SIZE + y;
+
+        // Ensure starting tile is safe but not a perfect circle
+        if (worldX === 0 && worldY === 0) {
+          newChunk[y][x] = 'SAFE_ZONE';
+          continue;
+        }
+        
+        // Use the new fractal noise with domain warping
+        const elevation = getNoise(worldX, worldY, INITIAL_WORLD_SEED, 0.002);
+        const moisture = getNoise(worldX + 1000, worldY + 1000, INITIAL_WORLD_SEED, 0.002);
+        const volcanicNoise = getNoise(worldX - 1000, worldY - 1000, INITIAL_WORLD_SEED, 0.005);
+        const riverNoise = getNoise(worldX + 500, worldY - 500, INITIAL_WORLD_SEED + 1, 0.01);
+        
+        // Add a bit of local jitter to the noise values to make edges jagged
+        const jitter = (seededRandom() - 0.5) * 0.03;
+        const e = elevation + jitter;
+        const m = moisture + jitter;
         
         // Safe zone cluster
         if (hasSafeZone && Math.abs(x - szX) < 3 && Math.abs(y - szY) < 3) {
@@ -143,10 +218,39 @@ export default function App() {
           continue;
         }
 
-        if (rand < 0.05) newChunk[y][x] = 'WALL';
-        else if (rand < 0.08) newChunk[y][x] = 'MOUNTAIN';
-        else if (rand < 0.12) newChunk[y][x] = 'WATER';
-        else newChunk[y][x] = 'GRASS';
+        // Determine biome based on noise
+        if (volcanicNoise > 0.92) {
+          newChunk[y][x] = 'LAVA';
+        } else if (e < 0.15) {
+          newChunk[y][x] = 'OCEAN';
+        } else if (Math.abs(riverNoise - 0.5) < 0.02 && e > 0.22 && e < 0.75) {
+          newChunk[y][x] = 'RIVER';
+        } else if (e < 0.22) {
+          newChunk[y][x] = 'BEACH';
+        } else if (e > 0.88) {
+          newChunk[y][x] = 'SNOW';
+        } else if (e > 0.75) {
+          newChunk[y][x] = 'MOUNTAIN';
+        } else {
+          // Moderate elevation: determine by moisture
+          if (m < 0.15) {
+            newChunk[y][x] = 'DESERT';
+          } else if (m < 0.4) {
+            newChunk[y][x] = 'GRASS';
+          } else if (m < 0.7) {
+            newChunk[y][x] = 'FOREST';
+          } else {
+            newChunk[y][x] = 'JUNGLE';
+          }
+        }
+
+        // Add local obstacles (only on walkable ground)
+        const walkable = ['GRASS', 'DESERT', 'FOREST', 'JUNGLE', 'BEACH', 'SNOW'];
+        if (walkable.includes(newChunk[y][x])) {
+          const rand = seededRandom();
+          if (rand < 0.02) newChunk[y][x] = 'WALL';
+          else if (rand < 0.04) newChunk[y][x] = 'WATER';
+        }
       }
     }
 
@@ -399,14 +503,33 @@ export default function App() {
       // Check if player is on water or safe zone
       const tileAtPlayer = getTileAt(playerPos.x + PLAYER_SIZE / 2, playerPos.y + PLAYER_SIZE / 2);
       const isOnWater = tileAtPlayer === 'WATER';
+      const isOnOcean = tileAtPlayer === 'OCEAN';
       const isOnSafeZone = tileAtPlayer === 'SAFE_ZONE';
+      const isOnDesert = tileAtPlayer === 'DESERT';
+      const isOnSnow = tileAtPlayer === 'SNOW';
+      const isOnLava = tileAtPlayer === 'LAVA';
+      const isOnJungle = tileAtPlayer === 'JUNGLE';
+      const isOnRiver = tileAtPlayer === 'RIVER';
       
       if (isOnSafeZone) {
         stateRef.current.playerHealth = Math.min(100, stateRef.current.playerHealth + 0.05);
         setPlayerHealth(Math.floor(stateRef.current.playerHealth));
       }
 
-      const currentSpeed = isOnWater ? PLAYER_SPEED * 0.4 : PLAYER_SPEED;
+      if (isOnLava) {
+        stateRef.current.playerHealth = Math.max(0, stateRef.current.playerHealth - 0.2);
+        setPlayerHealth(Math.floor(stateRef.current.playerHealth));
+        if (stateRef.current.playerHealth <= 0) setGameOver(true);
+      }
+
+      let currentSpeed = PLAYER_SPEED;
+      if (isOnOcean) currentSpeed *= 0.3;
+      else if (isOnWater) currentSpeed *= 0.6;
+      else if (isOnRiver) currentSpeed *= 0.5;
+      else if (isOnLava) currentSpeed *= 0.5;
+      else if (isOnSnow) currentSpeed *= 0.7;
+      else if (isOnDesert) currentSpeed *= 0.8;
+      else if (isOnJungle) currentSpeed *= 0.85;
 
       if (keys['w'] || keys['arrowup']) moveY -= currentSpeed;
       if (keys['s'] || keys['arrowdown']) moveY += currentSpeed;
@@ -750,12 +873,20 @@ export default function App() {
                   ty < camera.y - TILE_SIZE || ty > camera.y + VIEWPORT_HEIGHT) continue;
 
               const type = chunk[y][x];
-              if (type === 'GRASS') ctx.fillStyle = '#1b3a1a';
-              else if (type === 'WALL') ctx.fillStyle = '#4b5563';
-              else if (type === 'MOUNTAIN') ctx.fillStyle = '#1f2937';
+              if (type === 'GRASS') ctx.fillStyle = '#166534';
+              else if (type === 'WALL') ctx.fillStyle = '#6b7280';
+              else if (type === 'MOUNTAIN') ctx.fillStyle = '#374151';
               else if (type === 'BOSS_FLOOR') ctx.fillStyle = '#450a0a';
-              else if (type === 'WATER') ctx.fillStyle = '#1e3a8a';
-              else if (type === 'SAFE_ZONE') ctx.fillStyle = '#064e3b';
+              else if (type === 'WATER') ctx.fillStyle = '#3b82f6';
+              else if (type === 'SAFE_ZONE') ctx.fillStyle = '#10b981';
+              else if (type === 'DESERT') ctx.fillStyle = '#fef08a';
+              else if (type === 'FOREST') ctx.fillStyle = '#065f46';
+              else if (type === 'OCEAN') ctx.fillStyle = '#1d4ed8';
+              else if (type === 'SNOW') ctx.fillStyle = '#f8fafc';
+              else if (type === 'LAVA') ctx.fillStyle = '#dc2626';
+              else if (type === 'JUNGLE') ctx.fillStyle = '#064e3b';
+              else if (type === 'BEACH') ctx.fillStyle = '#fde047';
+              else if (type === 'RIVER') ctx.fillStyle = '#60a5fa';
               
               ctx.fillRect(tx, ty, TILE_SIZE, TILE_SIZE);
               
@@ -903,39 +1034,56 @@ export default function App() {
       // Draw HUD (Static)
       // Local Radar (Minimap)
       const mmSize = 150;
-      const radarRange = 1000; // Pixels around player
       ctx.fillStyle = 'rgba(0,0,0,0.7)';
       ctx.fillRect(VIEWPORT_WIDTH - mmSize - 20, 20, mmSize, mmSize);
       ctx.strokeStyle = 'rgba(255,255,255,0.2)';
       ctx.strokeRect(VIEWPORT_WIDTH - mmSize - 20, 20, mmSize, mmSize);
 
-      // Draw monsters on radar
-      monsters.forEach(m => {
-        const relX = m.x - playerPos.x;
-        const relY = m.y - playerPos.y;
-        if (Math.abs(relX) < radarRange && Math.abs(relY) < radarRange) {
-          const rx = VIEWPORT_WIDTH - mmSize / 2 - 20 + (relX / radarRange) * (mmSize / 2);
-          const ry = 20 + mmSize / 2 + (relY / radarRange) * (mmSize / 2);
+      // Draw terrain on radar
+      const tilesPerRadar = 30; // 30x30 tiles on radar
+      const radarTileSize = mmSize / tilesPerRadar;
+      const playerTileX = Math.floor(playerPos.x / TILE_SIZE);
+      const playerTileY = Math.floor(playerPos.y / TILE_SIZE);
+
+      for (let ty = -tilesPerRadar/2; ty < tilesPerRadar/2; ty++) {
+        for (let tx = -tilesPerRadar/2; tx < tilesPerRadar/2; tx++) {
+          const worldTX = (playerTileX + tx) * TILE_SIZE;
+          const worldTY = (playerTileY + ty) * TILE_SIZE;
+          const type = getTileAt(worldTX, worldTY);
           
-          let color = '#00ff00';
-          if (m.type === 'BOSS') color = '#ff0000';
-          else if (m.type === 'ORC') color = '#ff8800';
-          else if (m.type === 'RANGED') color = '#9333ea';
-          else if (m.type === 'CHARGER') color = '#f97316';
-          else if (m.type === 'HEALER') color = '#22c55e';
+          let color = '#166534';
+          if (type === 'WALL') color = '#6b7280';
+          else if (type === 'MOUNTAIN') color = '#374151';
+          else if (type === 'BOSS_FLOOR') color = '#450a0a';
+          else if (type === 'WATER') color = '#3b82f6';
+          else if (type === 'SAFE_ZONE') color = '#10b981';
+          else if (type === 'DESERT') color = '#fef08a';
+          else if (type === 'FOREST') color = '#065f46';
+          else if (type === 'OCEAN') color = '#1d4ed8';
+          else if (type === 'SNOW') color = '#f8fafc';
+          else if (type === 'LAVA') color = '#dc2626';
+          else if (type === 'JUNGLE') color = '#064e3b';
+          else if (type === 'BEACH') color = '#fde047';
+          else if (type === 'RIVER') color = '#60a5fa';
           
           ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(rx, ry, m.type === 'BOSS' ? 4 : 2, 0, Math.PI * 2);
-          ctx.fill();
+          const rx = VIEWPORT_WIDTH - mmSize/2 - 20 + tx * radarTileSize;
+          const ry = 20 + mmSize/2 + ty * radarTileSize;
+          ctx.fillRect(rx, ry, radarTileSize, radarTileSize);
         }
-      });
+      }
 
       // Draw player on radar (center)
       ctx.fillStyle = '#3498db';
       ctx.beginPath();
       ctx.arc(VIEWPORT_WIDTH - mmSize / 2 - 20, 20 + mmSize / 2, 3, 0, Math.PI * 2);
       ctx.fill();
+
+      // Coordinates
+      ctx.fillStyle = 'white';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`X: ${Math.floor(playerPos.x)} Y: ${Math.floor(playerPos.y)}`, VIEWPORT_WIDTH - 20, 20 + mmSize + 15);
 
       // Crosshair
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';

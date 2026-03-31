@@ -8,8 +8,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Gamepad2, Keyboard, Move, Info, Sword, Target, Zap, Heart, Trophy, MousePointer2, Skull } from 'lucide-react';
 
 // Game Constants
-const VIEWPORT_WIDTH = 800;
-const VIEWPORT_HEIGHT = 600;
 const CHUNK_SIZE = 20;
 const TILE_SIZE = 40;
 const CHUNK_PIXELS = CHUNK_SIZE * TILE_SIZE;
@@ -73,6 +71,11 @@ interface Projectile {
   isMonster?: boolean;
 }
 
+interface Chunk {
+  tiles: TileType[][];
+  canvas: HTMLCanvasElement;
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [playerPos, setPlayerPos] = useState<Position>({ x: 0, y: 0 });
@@ -88,9 +91,10 @@ export default function App() {
   const [isAttacking, setIsAttacking] = useState(false);
   const [gameOver, setGameOver] = useState(false);
   const [bossSpawned, setBossSpawned] = useState(false);
+  const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
 
-  // Map state: Map of "chunkX,chunkY" -> TileType[][]
-  const chunksRef = useRef<Map<string, TileType[][]>>(new Map());
+  // Map state: Map of "chunkX,chunkY" -> Chunk
+  const chunksRef = useRef<Map<string, Chunk>>(new Map());
   
   // Refs for game state to avoid stale closures in requestAnimationFrame
   const stateRef = useRef({
@@ -110,6 +114,7 @@ export default function App() {
     items: [] as Item[],
     particles: [] as Particle[],
     screenShake: 0,
+    viewport: { width: window.innerWidth, height: window.innerHeight },
   });
 
   const [items, setItems] = useState<Item[]>([]);
@@ -170,12 +175,12 @@ export default function App() {
     return val / totalAmp;
   };
 
-  const getChunk = (cx: number, cy: number): TileType[][] => {
+  const getChunk = (cx: number, cy: number): Chunk => {
     const key = `${cx},${cy}`;
     if (chunksRef.current.has(key)) return chunksRef.current.get(key)!;
 
     // Generate new chunk
-    const newChunk: TileType[][] = [];
+    const tiles: TileType[][] = [];
     
     // Seeded random for local details
     let s = Math.abs((cx * 73856093) ^ (cy * 19349663) ^ INITIAL_WORLD_SEED);
@@ -190,14 +195,14 @@ export default function App() {
     const szY = Math.floor(seededRandom() * (CHUNK_SIZE - 6)) + 3;
 
     for (let y = 0; y < CHUNK_SIZE; y++) {
-      newChunk[y] = [];
+      tiles[y] = [];
       for (let x = 0; x < CHUNK_SIZE; x++) {
         const worldX = cx * CHUNK_SIZE + x;
         const worldY = cy * CHUNK_SIZE + y;
 
         // Ensure starting tile is safe but not a perfect circle
         if (worldX === 0 && worldY === 0) {
-          newChunk[y][x] = 'SAFE_ZONE';
+          tiles[y][x] = 'SAFE_ZONE';
           continue;
         }
         
@@ -214,48 +219,85 @@ export default function App() {
         
         // Safe zone cluster
         if (hasSafeZone && Math.abs(x - szX) < 3 && Math.abs(y - szY) < 3) {
-          newChunk[y][x] = 'SAFE_ZONE';
+          tiles[y][x] = 'SAFE_ZONE';
           continue;
         }
 
         // Determine biome based on noise
         if (volcanicNoise > 0.92) {
-          newChunk[y][x] = 'LAVA';
+          tiles[y][x] = 'LAVA';
         } else if (e < 0.15) {
-          newChunk[y][x] = 'OCEAN';
+          tiles[y][x] = 'OCEAN';
         } else if (Math.abs(riverNoise - 0.5) < 0.02 && e > 0.22 && e < 0.75) {
-          newChunk[y][x] = 'RIVER';
+          tiles[y][x] = 'RIVER';
         } else if (e < 0.22) {
-          newChunk[y][x] = 'BEACH';
+          tiles[y][x] = 'BEACH';
         } else if (e > 0.88) {
-          newChunk[y][x] = 'SNOW';
+          tiles[y][x] = 'SNOW';
         } else if (e > 0.75) {
-          newChunk[y][x] = 'MOUNTAIN';
+          tiles[y][x] = 'MOUNTAIN';
         } else {
           // Moderate elevation: determine by moisture
           if (m < 0.15) {
-            newChunk[y][x] = 'DESERT';
+            tiles[y][x] = 'DESERT';
           } else if (m < 0.4) {
-            newChunk[y][x] = 'GRASS';
+            tiles[y][x] = 'GRASS';
           } else if (m < 0.7) {
-            newChunk[y][x] = 'FOREST';
+            tiles[y][x] = 'FOREST';
           } else {
-            newChunk[y][x] = 'JUNGLE';
+            tiles[y][x] = 'JUNGLE';
           }
         }
 
         // Add local obstacles (only on walkable ground)
         const walkable = ['GRASS', 'DESERT', 'FOREST', 'JUNGLE', 'BEACH', 'SNOW'];
-        if (walkable.includes(newChunk[y][x])) {
+        if (walkable.includes(tiles[y][x])) {
           const rand = seededRandom();
-          if (rand < 0.02) newChunk[y][x] = 'WALL';
-          else if (rand < 0.04) newChunk[y][x] = 'WATER';
+          if (rand < 0.04) tiles[y][x] = 'WALL';
+          else if (rand < 0.06) tiles[y][x] = 'WATER';
         }
       }
     }
 
-    chunksRef.current.set(key, newChunk);
-    return newChunk;
+    // Pre-render chunk to offscreen canvas
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = CHUNK_PIXELS;
+    offCanvas.height = CHUNK_PIXELS;
+    const offCtx = offCanvas.getContext('2d')!;
+
+    for (let y = 0; y < CHUNK_SIZE; y++) {
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        const type = tiles[y][x];
+        let color = '#166534';
+        if (type === 'WALL') color = '#6b7280';
+        else if (type === 'MOUNTAIN') color = '#374151';
+        else if (type === 'BOSS_FLOOR') color = '#450a0a';
+        else if (type === 'WATER') color = '#3b82f6';
+        else if (type === 'SAFE_ZONE') color = '#10b981';
+        else if (type === 'DESERT') color = '#fef08a';
+        else if (type === 'FOREST') color = '#065f46';
+        else if (type === 'OCEAN') color = '#1d4ed8';
+        else if (type === 'SNOW') color = '#f8fafc';
+        else if (type === 'LAVA') color = '#dc2626';
+        else if (type === 'JUNGLE') color = '#064e3b';
+        else if (type === 'BEACH') color = '#fde047';
+        else if (type === 'RIVER') color = '#60a5fa';
+
+        offCtx.fillStyle = color;
+        offCtx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }
+    }
+
+    const chunk: Chunk = { tiles, canvas: offCanvas };
+    
+    // Limit cache size to prevent memory leaks
+    if (chunksRef.current.size > 100) {
+      const firstKey = chunksRef.current.keys().next().value;
+      chunksRef.current.delete(firstKey);
+    }
+    
+    chunksRef.current.set(key, chunk);
+    return chunk;
   };
 
   const getTileAt = (worldX: number, worldY: number): TileType => {
@@ -264,10 +306,21 @@ export default function App() {
     const chunk = getChunk(cx, cy);
     const tx = Math.floor((worldX % CHUNK_PIXELS + CHUNK_PIXELS) % CHUNK_PIXELS / TILE_SIZE);
     const ty = Math.floor((worldY % CHUNK_PIXELS + CHUNK_PIXELS) % CHUNK_PIXELS / TILE_SIZE);
-    return chunk[ty][tx];
+    return chunk.tiles[ty][tx];
   };
 
   // Handle keyboard and mouse input
+  useEffect(() => {
+    const handleResize = () => {
+      const newViewport = { width: window.innerWidth, height: window.innerHeight };
+      setViewport(newViewport);
+      stateRef.current.viewport = newViewport;
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       setKeys(prev => ({ ...prev, [e.key.toLowerCase()]: true }));
@@ -560,8 +613,8 @@ export default function App() {
 
       // Update Camera
       stateRef.current.camera = {
-        x: nextPos.x - VIEWPORT_WIDTH / 2 + PLAYER_SIZE / 2,
-        y: nextPos.y - VIEWPORT_HEIGHT / 2 + PLAYER_SIZE / 2,
+        x: nextPos.x - stateRef.current.viewport.width / 2 + PLAYER_SIZE / 2,
+        y: nextPos.y - stateRef.current.viewport.height / 2 + PLAYER_SIZE / 2,
       };
 
       // Update Attack Timer
@@ -842,7 +895,8 @@ export default function App() {
     };
 
     const draw = () => {
-      ctx.clearRect(0, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
+      const { viewport } = stateRef.current;
+      ctx.clearRect(0, 0, viewport.width, viewport.height);
       const { camera, playerPos, monsters, projectiles, isAttacking, mousePos, screenShake, particles } = stateRef.current;
 
       ctx.save();
@@ -856,45 +910,16 @@ export default function App() {
 
       // Draw Tiles (Infinite)
       const startCX = Math.floor(camera.x / CHUNK_PIXELS);
-      const endCX = Math.floor((camera.x + VIEWPORT_WIDTH) / CHUNK_PIXELS);
+      const endCX = Math.floor((camera.x + viewport.width) / CHUNK_PIXELS);
       const startCY = Math.floor(camera.y / CHUNK_PIXELS);
-      const endCY = Math.floor((camera.y + VIEWPORT_HEIGHT) / CHUNK_PIXELS);
+      const endCY = Math.floor((camera.y + viewport.height) / CHUNK_PIXELS);
 
       for (let cy = startCY; cy <= endCY; cy++) {
         for (let cx = startCX; cx <= endCX; cx++) {
           const chunk = getChunk(cx, cy);
-          for (let y = 0; y < CHUNK_SIZE; y++) {
-            for (let x = 0; x < CHUNK_SIZE; x++) {
-              const tx = cx * CHUNK_PIXELS + x * TILE_SIZE;
-              const ty = cy * CHUNK_PIXELS + y * TILE_SIZE;
-
-              // Cull tiles off-screen
-              if (tx < camera.x - TILE_SIZE || tx > camera.x + VIEWPORT_WIDTH || 
-                  ty < camera.y - TILE_SIZE || ty > camera.y + VIEWPORT_HEIGHT) continue;
-
-              const type = chunk[y][x];
-              if (type === 'GRASS') ctx.fillStyle = '#166534';
-              else if (type === 'WALL') ctx.fillStyle = '#6b7280';
-              else if (type === 'MOUNTAIN') ctx.fillStyle = '#374151';
-              else if (type === 'BOSS_FLOOR') ctx.fillStyle = '#450a0a';
-              else if (type === 'WATER') ctx.fillStyle = '#3b82f6';
-              else if (type === 'SAFE_ZONE') ctx.fillStyle = '#10b981';
-              else if (type === 'DESERT') ctx.fillStyle = '#fef08a';
-              else if (type === 'FOREST') ctx.fillStyle = '#065f46';
-              else if (type === 'OCEAN') ctx.fillStyle = '#1d4ed8';
-              else if (type === 'SNOW') ctx.fillStyle = '#f8fafc';
-              else if (type === 'LAVA') ctx.fillStyle = '#dc2626';
-              else if (type === 'JUNGLE') ctx.fillStyle = '#064e3b';
-              else if (type === 'BEACH') ctx.fillStyle = '#fde047';
-              else if (type === 'RIVER') ctx.fillStyle = '#60a5fa';
-              
-              ctx.fillRect(tx, ty, TILE_SIZE, TILE_SIZE);
-              
-              // Grid lines
-              ctx.strokeStyle = 'rgba(0,0,0,0.1)';
-              ctx.strokeRect(tx, ty, TILE_SIZE, TILE_SIZE);
-            }
-          }
+          const tx = cx * CHUNK_PIXELS;
+          const ty = cy * CHUNK_PIXELS;
+          ctx.drawImage(chunk.canvas, tx, ty);
         }
       }
 
@@ -1035,9 +1060,9 @@ export default function App() {
       // Local Radar (Minimap)
       const mmSize = 150;
       ctx.fillStyle = 'rgba(0,0,0,0.7)';
-      ctx.fillRect(VIEWPORT_WIDTH - mmSize - 20, 20, mmSize, mmSize);
+      ctx.fillRect(viewport.width - mmSize - 20, 20, mmSize, mmSize);
       ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-      ctx.strokeRect(VIEWPORT_WIDTH - mmSize - 20, 20, mmSize, mmSize);
+      ctx.strokeRect(viewport.width - mmSize - 20, 20, mmSize, mmSize);
 
       // Draw terrain on radar
       const tilesPerRadar = 30; // 30x30 tiles on radar
@@ -1067,7 +1092,7 @@ export default function App() {
           else if (type === 'RIVER') color = '#60a5fa';
           
           ctx.fillStyle = color;
-          const rx = VIEWPORT_WIDTH - mmSize/2 - 20 + tx * radarTileSize;
+          const rx = viewport.width - mmSize/2 - 20 + tx * radarTileSize;
           const ry = 20 + mmSize/2 + ty * radarTileSize;
           ctx.fillRect(rx, ry, radarTileSize, radarTileSize);
         }
@@ -1076,14 +1101,14 @@ export default function App() {
       // Draw player on radar (center)
       ctx.fillStyle = '#3498db';
       ctx.beginPath();
-      ctx.arc(VIEWPORT_WIDTH - mmSize / 2 - 20, 20 + mmSize / 2, 3, 0, Math.PI * 2);
+      ctx.arc(viewport.width - mmSize / 2 - 20, 20 + mmSize / 2, 3, 0, Math.PI * 2);
       ctx.fill();
 
       // Coordinates
       ctx.fillStyle = 'white';
       ctx.font = '10px monospace';
       ctx.textAlign = 'right';
-      ctx.fillText(`X: ${Math.floor(playerPos.x)} Y: ${Math.floor(playerPos.y)}`, VIEWPORT_WIDTH - 20, 20 + mmSize + 15);
+      ctx.fillText(`X: ${Math.floor(playerPos.x)} Y: ${Math.floor(playerPos.y)}`, viewport.width - 20, 20 + mmSize + 15);
 
       // Crosshair
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
@@ -1156,39 +1181,50 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center p-4 font-sans text-white overflow-hidden cursor-none">
-      {/* Game Header */}
-      <div className="w-full max-w-[800px] flex justify-between items-end mb-4">
-        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
-          <h1 className="text-3xl font-black tracking-tighter uppercase italic text-green-400 flex items-center gap-2">
-            <Skull className="w-8 h-8" />
-            Forest Legend
-          </h1>
-          <div className="flex gap-4 mt-1">
-            <div className="flex items-center gap-2 bg-red-500/20 px-3 py-1 rounded-full border border-red-500/30">
-              <Heart className="w-4 h-4 text-red-500 fill-red-500" />
-              <span className="font-mono font-bold">{playerHealth}%</span>
-            </div>
-            <div className="flex items-center gap-2 bg-yellow-500/20 px-3 py-1 rounded-full border border-yellow-500/30">
-              <Trophy className="w-4 h-4 text-yellow-500" />
-              <span className="font-mono font-bold">{score}</span>
-            </div>
-            <div className="flex items-center gap-2 bg-blue-500/20 px-3 py-1 rounded-full border border-blue-500/30">
-              <Zap className="w-4 h-4 text-blue-400" />
-              <span className="font-mono font-bold">LVL {level}</span>
-            </div>
-          </div>
-          {/* XP Bar */}
-          <div className="w-full bg-white/5 h-1 mt-2 rounded-full overflow-hidden">
-            <motion.div 
-              className="h-full bg-blue-500"
-              initial={{ width: 0 }}
-              animate={{ width: `${(xp / (level * 100)) * 100}%` }}
-            />
-          </div>
-        </motion.div>
+    <div className="w-screen h-screen bg-black overflow-hidden font-sans text-white cursor-none">
+      {/* Game Container */}
+      <div className="relative w-full h-full">
+        <canvas
+          ref={canvasRef}
+          width={viewport.width}
+          height={viewport.height}
+          className="block bg-black"
+        />
 
-        <div className="flex gap-2">
+        {/* HUD Overlay */}
+        <div className="absolute top-6 left-6 pointer-events-none z-20">
+          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
+            <h1 className="text-4xl font-black tracking-tighter uppercase italic text-green-400 flex items-center gap-2 drop-shadow-lg">
+              <Skull className="w-10 h-10" />
+              Forest Legend
+            </h1>
+            <div className="flex gap-4 mt-3">
+              <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md px-4 py-2 rounded-xl border border-red-500/30 shadow-lg">
+                <Heart className="w-5 h-5 text-red-500 fill-red-500" />
+                <span className="font-mono font-bold text-xl">{playerHealth}%</span>
+              </div>
+              <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md px-4 py-2 rounded-xl border border-yellow-500/30 shadow-lg">
+                <Trophy className="w-5 h-5 text-yellow-500" />
+                <span className="font-mono font-bold text-xl">{score}</span>
+              </div>
+              <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md px-4 py-2 rounded-xl border border-blue-500/30 shadow-lg">
+                <Zap className="w-5 h-5 text-blue-400" />
+                <span className="font-mono font-bold text-xl">LVL {level}</span>
+              </div>
+            </div>
+            {/* XP Bar */}
+            <div className="w-64 bg-black/40 backdrop-blur-sm h-2 mt-4 rounded-full overflow-hidden border border-white/10">
+              <motion.div 
+                className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.5)]"
+                initial={{ width: 0 }}
+                animate={{ width: `${(xp / (level * 100)) * 100}%` }}
+              />
+            </div>
+          </motion.div>
+        </div>
+
+        {/* Weapon Selector Overlay */}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex gap-4 z-20">
           {[
             { id: 'SWORD', icon: Sword, key: '1', color: 'text-blue-400' },
             { id: 'BOW', icon: Target, key: '2', color: 'text-green-400' },
@@ -1197,33 +1233,17 @@ export default function App() {
             <button
               key={w.id}
               onClick={() => setCurrentWeapon(w.id as WeaponType)}
-              className={`relative p-3 rounded-xl border transition-all duration-300 ${
+              className={`p-5 rounded-2xl border-2 transition-all backdrop-blur-xl flex flex-col items-center gap-2 group ${
                 currentWeapon === w.id 
-                  ? 'bg-white/10 border-white/40 scale-110 shadow-[0_0_20px_rgba(255,255,255,0.1)]' 
-                  : 'bg-white/5 border-white/10 hover:bg-white/10 opacity-50'
+                  ? 'bg-white/20 border-white shadow-[0_0_30px_rgba(255,255,255,0.3)] scale-110' 
+                  : 'bg-black/40 border-white/10 hover:bg-white/10'
               }`}
             >
-              <w.icon className={`w-6 h-6 ${currentWeapon === w.id ? w.color : 'text-white'}`} />
-              <div className="text-[10px] mt-1 font-mono font-bold">{w.key}</div>
-              {currentWeapon === w.id && (
-                <motion.div 
-                  layoutId="activeWeapon"
-                  className="absolute -inset-1 border-2 border-white/20 rounded-xl"
-                />
-              )}
+              <w.icon className={`w-8 h-8 ${w.color} group-hover:scale-110 transition-transform`} />
+              <span className="text-[10px] font-black opacity-50 tracking-widest uppercase">{w.key}</span>
             </button>
           ))}
         </div>
-      </div>
-
-      {/* Game Container */}
-      <div className="relative rounded-2xl overflow-hidden shadow-[0_0_80px_rgba(0,0,0,0.8)] border-4 border-white/5">
-        <canvas
-          ref={canvasRef}
-          width={VIEWPORT_WIDTH}
-          height={VIEWPORT_HEIGHT}
-          className="block bg-black"
-        />
 
         {/* Boss Alert & Distance */}
         <AnimatePresence>
@@ -1303,13 +1323,6 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
-
-      {/* World Info */}
-      <div className="mt-6 flex gap-12 text-[10px] uppercase tracking-[0.3em] font-bold text-gray-700">
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-gray-600 rounded-full" /> Map: Infinite</div>
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-green-800 rounded-full" /> Safe Zone: Heals</div>
-        <div className="flex items-center gap-2"><div className="w-2 h-2 bg-blue-600 rounded-full" /> Engine: React Canvas</div>
       </div>
     </div>
   );

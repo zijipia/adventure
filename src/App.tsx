@@ -268,7 +268,8 @@ export default function App() {
   const [bossSpawned, setBossSpawned] = useState(false);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [isMobile, setIsMobile] = useState(false);
-  const [joystick, setJoystick] = useState({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0 });
+  const [joystick, setJoystick] = useState({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0, identifier: -1 });
+  const [aimJoystick, setAimJoystick] = useState({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0, identifier: -1 });
 
   // Refs for high-performance game state
   const stateRef = useRef({
@@ -291,6 +292,7 @@ export default function App() {
     screenShake: 0,
     keys: {} as { [key: string]: boolean },
     joystick: { x: 0, y: 0 },
+    aimJoystick: { x: 0, y: 0, active: false },
   });
 
   // State for rendering (updated via requestAnimationFrame)
@@ -522,7 +524,7 @@ export default function App() {
 
   const handleAttack = () => {
     const now = Date.now();
-    const { playerPos, mousePos, camera, joystick } = stateRef.current;
+    const { playerPos, mousePos, camera, joystick, aimJoystick } = stateRef.current;
     const playerCenterX = playerPos.x + PLAYER_SIZE / 2;
     const playerCenterY = playerPos.y + PLAYER_SIZE / 2;
     const mouseWorldX = mousePos.x + camera.x;
@@ -531,9 +533,14 @@ export default function App() {
     let dx = mouseWorldX - playerCenterX;
     let dy = mouseWorldY - playerCenterY;
 
-    if (isMobile && (joystick.x !== 0 || joystick.y !== 0)) {
-      dx = joystick.x;
-      dy = joystick.y;
+    if (isMobile) {
+      if (aimJoystick.x !== 0 || aimJoystick.y !== 0) {
+        dx = aimJoystick.x;
+        dy = aimJoystick.y;
+      } else if (joystick.x !== 0 || joystick.y !== 0) {
+        dx = joystick.x;
+        dy = joystick.y;
+      }
     }
 
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -590,6 +597,7 @@ export default function App() {
       let speed = stats.speed;
       let dx = 0;
       let dy = 0;
+      
       if (keys['w'] || keys['arrowup']) dy -= 1;
       if (keys['s'] || keys['arrowdown']) dy += 1;
       if (keys['a'] || keys['arrowleft']) dx -= 1;
@@ -644,6 +652,10 @@ export default function App() {
       };
 
       // Attack
+      if (isMobile && stateRef.current.aimJoystick.active) {
+        handleAttack();
+      }
+
       if (stateRef.current.isAttacking) {
         stateRef.current.attackTimer--;
         if (stateRef.current.attackTimer <= 0) stateRef.current.isAttacking = false;
@@ -1178,6 +1190,8 @@ export default function App() {
       attackSpeed: 1,
       range: 1
     });
+    setJoystick({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0, identifier: -1 });
+    setAimJoystick({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0, identifier: -1 });
     stateRef.current = {
       ...stateRef.current,
       playerPos: { x: 0, y: 0 },
@@ -1191,6 +1205,8 @@ export default function App() {
       xp: 0,
       level: 1,
       bossSpawned: false,
+      joystick: { x: 0, y: 0 },
+      aimJoystick: { x: 0, y: 0, active: false },
     };
     setPlayerStamina(100);
   };
@@ -1272,7 +1288,23 @@ export default function App() {
                 height={10}
                 fill="#fff"
                 opacity={0.6}
-                rotation={Math.atan2(stateRef.current.mousePos.y + renderState.camera.y - (renderState.playerPos.y + PLAYER_SIZE / 2), stateRef.current.mousePos.x + renderState.camera.x - (renderState.playerPos.x + PLAYER_SIZE / 2)) * 180 / Math.PI}
+                rotation={(() => {
+                  const { playerPos, mousePos, camera, joystick, aimJoystick } = stateRef.current;
+                  const playerCenterX = playerPos.x + PLAYER_SIZE / 2;
+                  const playerCenterY = playerPos.y + PLAYER_SIZE / 2;
+                  let dx = mousePos.x + camera.x - playerCenterX;
+                  let dy = mousePos.y + camera.y - playerCenterY;
+                  if (isMobile) {
+                    if (aimJoystick.x !== 0 || aimJoystick.y !== 0) {
+                      dx = aimJoystick.x;
+                      dy = aimJoystick.y;
+                    } else if (joystick.x !== 0 || joystick.y !== 0) {
+                      dx = joystick.x;
+                      dy = joystick.y;
+                    }
+                  }
+                  return Math.atan2(dy, dx) * 180 / Math.PI;
+                })()}
                 offsetY={5}
               />
             )}
@@ -1357,16 +1389,25 @@ export default function App() {
             className="absolute bottom-12 left-12 w-40 h-40 bg-white/5 rounded-full border border-white/10 pointer-events-auto flex items-center justify-center select-none touch-none"
             onTouchStart={(e) => {
               e.preventDefault();
-              const touch = e.touches[0];
+              const touch = e.changedTouches[0];
               const rect = e.currentTarget.getBoundingClientRect();
               const centerX = rect.left + rect.width / 2;
               const centerY = rect.top + rect.height / 2;
-              setJoystick({ active: true, x: 0, y: 0, startX: centerX, startY: centerY, currentX: touch.clientX, currentY: touch.clientY });
+              setJoystick({ active: true, x: 0, y: 0, startX: centerX, startY: centerY, currentX: touch.clientX, currentY: touch.clientY, identifier: touch.identifier });
             }}
             onTouchMove={(e) => {
               e.preventDefault();
               if (!joystick.active) return;
-              const touch = e.touches[0];
+              
+              let touch = null;
+              for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === joystick.identifier) {
+                  touch = e.changedTouches[i];
+                  break;
+                }
+              }
+              if (!touch) return;
+
               const dx = touch.clientX - joystick.startX;
               const dy = touch.clientY - joystick.startY;
               const dist = Math.sqrt(dx * dx + dy * dy);
@@ -1383,8 +1424,17 @@ export default function App() {
             }}
             onTouchEnd={(e) => {
               e.preventDefault();
-              setJoystick({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0 });
-              stateRef.current.joystick = { x: 0, y: 0 };
+              let touchEnded = false;
+              for (let i = 0; i < e.changedTouches.length; i++) {
+                if (e.changedTouches[i].identifier === joystick.identifier) {
+                  touchEnded = true;
+                  break;
+                }
+              }
+              if (touchEnded) {
+                setJoystick({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0, identifier: -1 });
+                stateRef.current.joystick = { x: 0, y: 0 };
+              }
             }}
           >
             <div className="w-16 h-16 bg-white/10 rounded-full border border-white/20 flex items-center justify-center">
@@ -1414,15 +1464,77 @@ export default function App() {
               >
                 <RefreshCw className="w-8 h-8 text-white" />
               </button>
-              <button 
-                className="w-24 h-24 bg-red-600/80 rounded-full border-4 border-white/20 flex items-center justify-center active:scale-90 transition-transform shadow-xl touch-none"
+              
+              {/* Aiming/Attack Joystick */}
+              <div 
+                className="w-32 h-32 bg-red-600/20 rounded-full border-2 border-red-500/30 flex items-center justify-center relative touch-none"
                 onTouchStart={(e) => {
                   e.preventDefault();
+                  const touch = e.changedTouches[0];
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const centerX = rect.left + rect.width / 2;
+                  const centerY = rect.top + rect.height / 2;
+                  setAimJoystick({ active: true, x: 0, y: 0, startX: centerX, startY: centerY, currentX: touch.clientX, currentY: touch.clientY, identifier: touch.identifier });
+                  stateRef.current.aimJoystick.active = true;
                   handleAttack();
                 }}
+                onTouchMove={(e) => {
+                  e.preventDefault();
+                  if (!aimJoystick.active) return;
+
+                  let touch = null;
+                  for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === aimJoystick.identifier) {
+                      touch = e.changedTouches[i];
+                      break;
+                    }
+                  }
+                  if (!touch) return;
+
+                  const dx = touch.clientX - aimJoystick.startX;
+                  const dy = touch.clientY - aimJoystick.startY;
+                  const dist = Math.sqrt(dx * dx + dy * dy);
+                  const maxDist = 60;
+                  const normalizedDx = dx / Math.max(dist, 1);
+                  const normalizedDy = dy / Math.max(dist, 1);
+                  const finalDist = Math.min(dist, maxDist);
+                  
+                  stateRef.current.aimJoystick = {
+                    x: normalizedDx * (finalDist / maxDist),
+                    y: normalizedDy * (finalDist / maxDist),
+                    active: true
+                  };
+                  setAimJoystick(prev => ({ ...prev, currentX: touch.clientX, currentY: touch.clientY }));
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  let touchEnded = false;
+                  for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === aimJoystick.identifier) {
+                      touchEnded = true;
+                      break;
+                    }
+                  }
+                  if (touchEnded) {
+                    setAimJoystick({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0, identifier: -1 });
+                    stateRef.current.aimJoystick = { x: 0, y: 0, active: false };
+                  }
+                }}
               >
-                <Sword className="w-12 h-12 text-white" />
-              </button>
+                <div className="w-16 h-16 bg-red-600/40 rounded-full border border-red-500/50 flex items-center justify-center">
+                  {aimJoystick.active ? (
+                    <motion.div 
+                      className="w-10 h-10 bg-red-500 rounded-full shadow-lg shadow-red-500/50"
+                      style={{
+                        x: Math.min(Math.max(aimJoystick.currentX - aimJoystick.startX, -60), 60),
+                        y: Math.min(Math.max(aimJoystick.currentY - aimJoystick.startY, -60), 60),
+                      }}
+                    />
+                  ) : (
+                    <Sword className="w-8 h-8 text-white" />
+                  )}
+                </div>
+              </div>
             </div>
             <div className="flex gap-4">
               <button 

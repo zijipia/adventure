@@ -4,7 +4,161 @@
  */
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Stage, Layer, Rect, Circle, Image as KonvaImage, Group, Text } from 'react-konva';
+import { Stage, Layer, Rect, Circle, Image as KonvaImage, Group, Text, Shape } from 'react-konva';
+
+// ... (rest of imports)
+
+const ItemRenderer = ({ items, camera, playerPos }: { items: any[], camera: any, playerPos: any }) => {
+  return (
+    <Shape
+      sceneFunc={(context, shape) => {
+        items.forEach(item => {
+          const dx = item.x - playerPos.x;
+          const dy = item.y - playerPos.y;
+          if (Math.sqrt(dx * dx + dy * dy) > RENDER_DIST) return;
+
+          const x = item.x - camera.x;
+          const y = item.y - camera.y;
+          const radius = Math.max(0, item.type === 'HEALTH' ? 6 : 4);
+
+          context.beginPath();
+          context.arc(x, y, radius, 0, Math.PI * 2);
+          context.fillStyle = item.type === 'HEALTH' ? '#e74c3c' : '#3498db';
+          context.fill();
+        });
+      }}
+      listening={false}
+    />
+  );
+};
+
+const ProjectileRenderer = ({ projectiles, camera, playerPos }: { projectiles: any[], camera: any, playerPos: any }) => {
+  return (
+    <Shape
+      sceneFunc={(context, shape) => {
+        projectiles.forEach(p => {
+          const dx = p.x - playerPos.x;
+          const dy = p.y - playerPos.y;
+          if (Math.sqrt(dx * dx + dy * dy) > RENDER_DIST) return;
+
+          const x = p.x - camera.x;
+          const y = p.y - camera.y;
+          const radius = Math.max(0, p.type === 'ARROW' ? 3 : 4);
+
+          context.beginPath();
+          context.arc(x, y, radius, 0, Math.PI * 2);
+          context.fillStyle = p.isMonster ? '#9b59b6' : (p.type === 'ARROW' ? '#f1c40f' : '#ecf0f1');
+          context.fill();
+        });
+      }}
+      listening={false}
+    />
+  );
+};
+
+const ParticleRenderer = ({ particles, camera }: { particles: any[], camera: any }) => {
+  return (
+    <Shape
+      sceneFunc={(context, shape) => {
+        particles.forEach(p => {
+          const x = p.x - camera.x;
+          const y = p.y - camera.y;
+          const radius = Math.max(0, 2 * p.life);
+
+          context.beginPath();
+          context.arc(x, y, radius, 0, Math.PI * 2);
+          context.fillStyle = p.color;
+          context.globalAlpha = p.life;
+          context.fill();
+          context.globalAlpha = 1;
+        });
+      }}
+      listening={false}
+    />
+  );
+};
+
+const MonsterRenderer = ({ monsters, camera, playerPos }: { monsters: any[], camera: any, playerPos: any }) => {
+  return (
+    <Shape
+      sceneFunc={(context, shape) => {
+        monsters.forEach(m => {
+          const dx = m.x - playerPos.x;
+          const dy = m.y - playerPos.y;
+          if (Math.sqrt(dx * dx + dy * dy) > RENDER_DIST) return;
+
+          const x = m.x - camera.x;
+          const y = m.y - camera.y;
+          const size = m.size || 1;
+          const baseSize = m.type === 'BOSS' ? 120 : MONSTER_SIZE;
+          const mSize = baseSize * size;
+
+          context.save();
+          context.translate(x, y);
+          context.globalAlpha = m.invisible ? 0.2 : 1;
+
+          // Body
+          context.beginPath();
+          const cornerRadius = (m.type === 'SLIME' || m.type === 'SPLITTER') ? 14 * size : 4 * size;
+          
+          // Simple rect with corner radius manually if needed, but for performance let's use simple rect or roundedRect
+          context.fillStyle = 
+            m.type === 'BOSS' ? '#991b1b' : 
+            m.type === 'ORC' ? '#1e3a8a' : 
+            m.type === 'RANGED' ? '#7c3aed' : 
+            m.type === 'CHARGER' ? '#ea580c' : 
+            m.type === 'HEALER' ? '#059669' : 
+            m.type === 'SUMMONER' ? '#f59e0b' :
+            m.type === 'EXPLODER' ? '#f39c12' :
+            m.type === 'GHOST' ? '#94a3b8' :
+            m.type === 'SPLITTER' ? '#be185d' :
+            m.type === 'SHIELDBEARER' ? '#475569' :
+            '#166534';
+          
+          context.fillRect(0, 0, mSize, mSize);
+          
+          if (m.isCharging || m.isExploding) {
+            context.strokeStyle = '#fff';
+            context.lineWidth = 3;
+            context.strokeRect(0, 0, mSize, mSize);
+          } else {
+            context.strokeStyle = '#000';
+            context.lineWidth = 2;
+            context.strokeRect(0, 0, mSize, mSize);
+          }
+
+          // Eyes
+          context.fillStyle = '#fff';
+          const eyeSize = (m.type === 'BOSS' ? 15 : 4) * size;
+          const eyeOffset1 = (m.type === 'BOSS' ? 30 : 6) * size;
+          const eyeOffset2 = (m.type === 'BOSS' ? 75 : 18) * size;
+          const eyeY = (m.type === 'BOSS' ? 30 : 6) * size;
+          context.fillRect(eyeOffset1, eyeY, eyeSize, eyeSize);
+          context.fillRect(eyeOffset2, eyeY, eyeSize, eyeSize);
+
+          // Health Bar
+          context.fillStyle = '#333';
+          context.fillRect(0, -10, mSize, 4);
+          context.fillStyle = '#e74c3c';
+          context.fillRect(0, -10, mSize * (m.health / m.maxHealth), 4);
+
+          // Explosion Warning
+          if (m.isExploding) {
+            context.beginPath();
+            const explosionRadius = Math.max(0, 40 * (1 - (m.explosionTimer || 0) / 60));
+            context.arc(mSize / 2, mSize / 2, explosionRadius, 0, Math.PI * 2);
+            context.fillStyle = "#f39c12";
+            context.globalAlpha = 0.3;
+            context.fill();
+          }
+
+          context.restore();
+        });
+      }}
+      listening={false}
+    />
+  );
+};
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Gamepad2, Keyboard, Move, Info, Sword, Target, Zap, Heart, 
@@ -22,7 +176,13 @@ const PLAYER_SPEED = 5;
 const MONSTER_SIZE = 28;
 const MONSTER_SPEED = 1.8;
 const PROJECTILE_SPEED = 10;
-const INITIAL_WORLD_SEED = Math.floor(Math.random() * 1000000); 
+const MAX_MONSTERS = 40;
+const MAX_PARTICLES = 60;
+const UPDATE_DIST = 1000;
+const RENDER_DIST = 800;
+const DESPAWN_DIST = 3000;
+const GRID_SIZE = 100;
+const INITIAL_WORLD_SEED = Math.floor(Math.random() * 11500)+15200; 
 
 type WeaponType = 'SWORD' | 'BOW' | 'GUN';
 type TileType = 'GRASS' | 'WALL' | 'MOUNTAIN' | 'BOSS_FLOOR' | 'WATER' | 'SAFE_ZONE' | 'DESERT' | 'FOREST' | 'OCEAN' | 'SNOW' | 'LAVA' | 'JUNGLE' | 'BEACH' | 'RIVER';
@@ -31,7 +191,8 @@ interface Item {
   id: number;
   x: number;
   y: number;
-  type: 'HEALTH';
+  type: 'HEALTH' | 'XP';
+  value: number;
 }
 
 interface Position {
@@ -39,7 +200,7 @@ interface Position {
   y: number;
 }
 
-type MonsterType = 'SLIME' | 'ORC' | 'BOSS' | 'RANGED' | 'CHARGER' | 'HEALER';
+type MonsterType = 'SLIME' | 'ORC' | 'BOSS' | 'RANGED' | 'CHARGER' | 'HEALER' | 'SUMMONER' | 'EXPLODER' | 'GHOST' | 'SPLITTER' | 'SHIELDBEARER';
 
 interface Monster {
   id: number;
@@ -53,6 +214,10 @@ interface Monster {
   lastSkillTime: number;
   isCharging?: boolean;
   chargeDir?: { x: number, y: number };
+  invisible?: boolean;
+  isExploding?: boolean;
+  explosionTimer?: number;
+  size?: number; // For splitters
 }
 
 interface Particle {
@@ -85,12 +250,25 @@ export default function App() {
   const [isGameRunning, setIsGameRunning] = useState(false);
   const [gameOver, setGameOver] = useState(false);
   const [playerHealth, setPlayerHealth] = useState(100);
+  const [playerStamina, setPlayerStamina] = useState(100);
   const [score, setScore] = useState(0);
   const [level, setLevel] = useState(1);
   const [xp, setXp] = useState(0);
+  const [showLevelUp, setShowLevelUp] = useState(false);
+  const [upgrades, setUpgrades] = useState<string[]>([]);
+  const [stats, setStats] = useState({
+    maxHealth: 100,
+    maxStamina: 100,
+    damage: 1,
+    speed: 5,
+    attackSpeed: 1,
+    range: 1
+  });
   const [currentWeapon, setCurrentWeapon] = useState<WeaponType>('SWORD');
   const [bossSpawned, setBossSpawned] = useState(false);
   const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const [isMobile, setIsMobile] = useState(false);
+  const [joystick, setJoystick] = useState({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0 });
 
   // Refs for high-performance game state
   const stateRef = useRef({
@@ -105,12 +283,14 @@ export default function App() {
     xp: 0,
     level: 1,
     playerHealth: 100,
+    playerStamina: 100,
     camera: { x: 0, y: 0 },
     bossSpawned: false,
     items: [] as Item[],
     particles: [] as Particle[],
     screenShake: 0,
     keys: {} as { [key: string]: boolean },
+    joystick: { x: 0, y: 0 },
   });
 
   // State for rendering (updated via requestAnimationFrame)
@@ -276,7 +456,9 @@ export default function App() {
   };
 
   const createParticles = (x: number, y: number, color: string, count: number) => {
-    for (let i = 0; i < count; i++) {
+    if (stateRef.current.particles.length >= MAX_PARTICLES) return;
+    const actualCount = Math.min(count, MAX_PARTICLES - stateRef.current.particles.length);
+    for (let i = 0; i < actualCount; i++) {
       stateRef.current.particles.push({
         id: Math.random(),
         x,
@@ -291,6 +473,11 @@ export default function App() {
 
   // Input Handling
   useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 1024);
+    };
+    checkMobile();
+
     const handleKeyDown = (e: KeyboardEvent) => {
       stateRef.current.keys[e.key.toLowerCase()] = true;
       if (e.key === '1') setCurrentWeapon('SWORD');
@@ -301,39 +488,68 @@ export default function App() {
     const handleKeyUp = (e: KeyboardEvent) => {
       stateRef.current.keys[e.key.toLowerCase()] = false;
     };
-    const handleResize = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
+    const handleResize = () => {
+      const width = window.visualViewport ? window.visualViewport.width : window.innerWidth;
+      const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      setViewport({ width, height });
+      checkMobile();
+    };
+
+    const preventZoom = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('resize', handleResize);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize);
+    }
+    document.addEventListener('touchstart', preventZoom, { passive: false });
+    
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('resize', handleResize);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleResize);
+      }
+      document.removeEventListener('touchstart', preventZoom);
     };
   }, [isGameRunning, gameOver]);
 
   const handleAttack = () => {
     const now = Date.now();
-    const { playerPos, mousePos, camera } = stateRef.current;
+    const { playerPos, mousePos, camera, joystick } = stateRef.current;
     const playerCenterX = playerPos.x + PLAYER_SIZE / 2;
     const playerCenterY = playerPos.y + PLAYER_SIZE / 2;
     const mouseWorldX = mousePos.x + camera.x;
     const mouseWorldY = mousePos.y + camera.y;
-    const dx = mouseWorldX - playerCenterX;
-    const dy = mouseWorldY - playerCenterY;
+    
+    let dx = mouseWorldX - playerCenterX;
+    let dy = mouseWorldY - playerCenterY;
+
+    if (isMobile && (joystick.x !== 0 || joystick.y !== 0)) {
+      dx = joystick.x;
+      dy = joystick.y;
+    }
+
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist === 0) return;
     const dirX = dx / dist;
     const dirY = dy / dist;
 
     if (currentWeapon === 'SWORD') {
-      if (!stateRef.current.isAttacking) {
+      const cooldown = 250 / stats.attackSpeed;
+      if (!stateRef.current.isAttacking && now - stateRef.current.lastShotTime > cooldown) {
         stateRef.current.isAttacking = true;
         stateRef.current.attackTimer = 12;
+        stateRef.current.lastShotTime = now;
       }
     } else {
-      const cooldown = currentWeapon === 'BOW' ? 400 : 120;
+      const cooldown = (currentWeapon === 'BOW' ? 400 : 120) / stats.attackSpeed;
       if (now - stateRef.current.lastShotTime > cooldown) {
         stateRef.current.lastShotTime = now;
         stateRef.current.projectiles.push({
@@ -371,16 +587,39 @@ export default function App() {
         if (stateRef.current.playerHealth <= 0) setGameOver(true);
       }
 
-      let speed = PLAYER_SPEED;
+      let speed = stats.speed;
+      let dx = 0;
+      let dy = 0;
+      if (keys['w'] || keys['arrowup']) dy -= 1;
+      if (keys['s'] || keys['arrowdown']) dy += 1;
+      if (keys['a'] || keys['arrowleft']) dx -= 1;
+      if (keys['d'] || keys['arrowright']) dx += 1;
+
+      // Joystick input
+      if (stateRef.current.joystick.x !== 0 || stateRef.current.joystick.y !== 0) {
+        dx = stateRef.current.joystick.x;
+        dy = stateRef.current.joystick.y;
+      }
+
+      const isSprinting = (keys['shift'] || keys['sprint']) && stateRef.current.playerStamina >= 10 && (dx !== 0 || dy !== 0);
+      if (isSprinting) {
+        speed *= 1.8;
+        stateRef.current.playerStamina = Math.max(0, stateRef.current.playerStamina - 0.5);
+      } else {
+        stateRef.current.playerStamina = Math.min(stats.maxStamina, stateRef.current.playerStamina + 0.1);
+      }
+      setPlayerStamina(Math.floor(stateRef.current.playerStamina));
+
       if (tileAtPlayer === 'OCEAN') speed *= 0.3;
       else if (tileAtPlayer === 'WATER' || tileAtPlayer === 'RIVER') speed *= 0.6;
       else if (tileAtPlayer === 'SNOW') speed *= 0.7;
       else if (tileAtPlayer === 'DESERT') speed *= 0.8;
 
-      if (keys['w'] || keys['arrowup']) moveY -= speed;
-      if (keys['s'] || keys['arrowdown']) moveY += speed;
-      if (keys['a'] || keys['arrowleft']) moveX -= speed;
-      if (keys['d'] || keys['arrowright']) moveX += speed;
+      if (dx !== 0 || dy !== 0) {
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        moveX = (dx / dist) * speed;
+        moveY = (dy / dist) * speed;
+      }
 
       const checkCollision = (nx: number, ny: number) => {
         const points = [
@@ -419,8 +658,8 @@ export default function App() {
         if (p.isMonster) {
           const dist = Math.sqrt((p.x - (playerPos.x + PLAYER_SIZE / 2)) ** 2 + (p.y - (playerPos.y + PLAYER_SIZE / 2)) ** 2);
           if (dist < PLAYER_SIZE / 2 + 5) {
-            stateRef.current.playerHealth -= 10;
-            stateRef.current.screenShake = 8;
+            stateRef.current.playerHealth -= 5;
+            stateRef.current.screenShake = 5;
             setPlayerHealth(Math.max(0, Math.floor(stateRef.current.playerHealth)));
             if (stateRef.current.playerHealth <= 0) setGameOver(true);
             return false;
@@ -429,62 +668,376 @@ export default function App() {
         return Math.sqrt((p.x - playerPos.x) ** 2 + (p.y - playerPos.y) ** 2) < 1000;
       });
 
+      // Items
+      stateRef.current.items = stateRef.current.items.filter(item => {
+        const dx = playerPos.x - item.x;
+        const dy = playerPos.y - item.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        if (dist < 30) {
+          if (item.type === 'HEALTH') {
+            stateRef.current.playerHealth = Math.min(stats.maxHealth, stateRef.current.playerHealth + item.value);
+            setPlayerHealth(stateRef.current.playerHealth);
+          } else if (item.type === 'XP') {
+            stateRef.current.xp += item.value;
+            if (stateRef.current.xp >= stateRef.current.level * 100) {
+              stateRef.current.xp -= stateRef.current.level * 100;
+              stateRef.current.level++;
+              setLevel(stateRef.current.level);
+              
+              // Level up logic
+              const possibleUpgrades = [
+                'Increase Max Health',
+                'Increase Max Stamina',
+                'Increase Damage',
+                'Increase Speed',
+                'Increase Attack Speed',
+                'Increase Attack Range'
+              ];
+              const selected = [];
+              const pool = [...possibleUpgrades];
+              for (let i = 0; i < 3; i++) {
+                const idx = Math.floor(Math.random() * pool.length);
+                selected.push(pool.splice(idx, 1)[0]);
+              }
+              setUpgrades(selected);
+              setShowLevelUp(true);
+              setIsGameRunning(false);
+            }
+            setXp(stateRef.current.xp);
+          }
+          return false;
+        }
+        
+        // Magnet effect
+        if (dist < 150) {
+          item.x += (dx / dist) * 4;
+          item.y += (dy / dist) * 4;
+        }
+        
+        return true;
+      });
+
       // Monsters
+      const playerProjectiles = stateRef.current.projectiles.filter(p => !p.isMonster && !p.dead);
+      
+      // Build spatial grid for monsters
+      const monsterGrid: Record<string, any[]> = {};
+      stateRef.current.monsters.forEach(m => {
+        const gx = Math.floor(m.x / GRID_SIZE);
+        const gy = Math.floor(m.y / GRID_SIZE);
+        const key = `${gx},${gy}`;
+        if (!monsterGrid[key]) monsterGrid[key] = [];
+        monsterGrid[key].push(m);
+      });
+
       stateRef.current.monsters.forEach(m => {
         const dx = playerPos.x - m.x;
         const dy = playerPos.y - m.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const mSpeed = m.type === 'BOSS' ? MONSTER_SPEED * 0.7 : MONSTER_SPEED;
+        const distSq = dx * dx + dy * dy;
         
-        if (dist < (m.type === 'BOSS' ? 80 : PLAYER_SIZE)) {
-          stateRef.current.playerHealth -= m.type === 'BOSS' ? 1.5 : 0.4;
-          setPlayerHealth(Math.max(0, Math.floor(stateRef.current.playerHealth)));
-          if (stateRef.current.playerHealth <= 0) setGameOver(true);
+        // Culling: Skip update for far-away monsters (1000^2 = 1,000,000)
+        if (distSq > 1000000) return;
+        const dist = Math.sqrt(distSq);
+
+        let mSpeed = MONSTER_SPEED;
+        if (m.type === 'BOSS') mSpeed *= 0.7;
+        if (m.type === 'CHARGER' && m.isCharging) mSpeed *= 4;
+        if (m.type === 'HEALER') mSpeed *= 1.2;
+        if (m.type === 'SLIME') mSpeed *= 0.8;
+
+        // Monster AI & Skills
+        const now = Date.now();
+        
+        if (m.type === 'RANGED') {
+          if (dist < 400 && now - m.lastSkillTime > 2000) {
+            m.lastSkillTime = now;
+            const angle = Math.atan2(dy, dx);
+            stateRef.current.projectiles.push({
+              id: Math.random(),
+              x: m.x + MONSTER_SIZE / 2,
+              y: m.y + MONSTER_SIZE / 2,
+              vx: Math.cos(angle) * 5,
+              vy: Math.sin(angle) * 5,
+              type: 'MONSTER_ORB',
+              isMonster: true
+            });
+          }
+          // RANGED movement: stay at distance
+          if (dist < 250) {
+            mSpeed *= -1; // Move away
+          } else if (dist < 350) {
+            mSpeed = 0; // Stand still to shoot
+          }
+        } else if (m.type === 'CHARGER') {
+          if (!m.isCharging && dist < 300 && now - m.lastSkillTime > 4000) {
+            m.isCharging = true;
+            m.lastSkillTime = now;
+            const angle = Math.atan2(dy, dx);
+            m.chargeDir = { x: Math.cos(angle), y: Math.sin(angle) };
+            setTimeout(() => {
+              m.isCharging = false;
+            }, 800);
+          }
+        } else if (m.type === 'HEALER') {
+          // Heal nearby monsters using spatial grid
+          const gx = Math.floor(m.x / GRID_SIZE);
+          const gy = Math.floor(m.y / GRID_SIZE);
+          for (let i = -1; i <= 1; i++) {
+            for (let j = -1; j <= 1; j++) {
+              const key = `${gx + i},${gy + j}`;
+              const cell = monsterGrid[key];
+              if (cell) {
+                cell.forEach(other => {
+                  if (other.id !== m.id && other.health < other.maxHealth) {
+                    const dSq = (other.x - m.x) ** 2 + (other.y - m.y) ** 2;
+                    if (dSq < 40000) { // 200^2
+                      other.health = Math.min(other.maxHealth, other.health + 0.2);
+                      if (Math.random() < 0.05) createParticles(other.x + MONSTER_SIZE/2, other.y + MONSTER_SIZE/2, '#2ecc71', 1);
+                    }
+                  }
+                });
+              }
+            }
+          }
+          // Stay away from player
+          if (dist < 250) mSpeed *= -1;
+        } else if (m.type === 'SUMMONER') {
+          if (distSq < 250000 && now - m.lastSkillTime > 8000) { // 500^2
+            m.lastSkillTime = now;
+            for (let i = 0; i < 3; i++) {
+              const angle = Math.random() * Math.PI * 2;
+              stateRef.current.monsters.push({
+                id: Math.random(),
+                x: m.x + Math.cos(angle) * 50,
+                y: m.y + Math.sin(angle) * 50,
+                health: 30,
+                maxHealth: 30,
+                type: 'SLIME',
+                stuckTime: 0,
+                stuckDir: null,
+                lastSkillTime: now
+              });
+            }
+            createParticles(m.x + MONSTER_SIZE/2, m.y + MONSTER_SIZE/2, '#f1c40f', 10);
+          }
+          if (dist < 300) mSpeed *= -1;
+        } else if (m.type === 'EXPLODER') {
+          mSpeed *= 1.5; // Fast
+          if (distSq < 3600 && !m.isExploding) { // 60^2
+            m.isExploding = true;
+            m.explosionTimer = 60; // 1 second at 60fps
+          }
+          if (m.isExploding) {
+            mSpeed = 0;
+            m.explosionTimer!--;
+            if (m.explosionTimer! <= 0) {
+              m.health = 0; // Trigger death/explosion
+              // Damage player if close
+              if (distSq < 10000) { // 100^2
+                stateRef.current.playerHealth -= 20;
+                stateRef.current.screenShake = 15;
+                setPlayerHealth(Math.max(0, Math.floor(stateRef.current.playerHealth)));
+              }
+              createParticles(m.x, m.y, '#f39c12', 20);
+            }
+          }
+        } else if (m.type === 'GHOST') {
+          if (now - m.lastSkillTime > 3000) {
+            m.lastSkillTime = now;
+            m.invisible = !m.invisible;
+          }
+          if (m.invisible) mSpeed *= 0.5;
+        } else if (m.type === 'SHIELDBEARER') {
+          mSpeed *= 0.6; // Slow
+        } else if (m.type === 'BOSS') {
+          // Boss Skills
+          const timeSinceLastSkill = now - m.lastSkillTime;
+          
+          if (timeSinceLastSkill > 3000) {
+            m.lastSkillTime = now;
+            
+            // Randomly choose a skill
+            const skillRand = Math.random();
+            
+            if (skillRand < 0.4) {
+              // Skill 1: Radial burst
+              for (let i = 0; i < 12; i++) {
+                const angle = (i / 12) * Math.PI * 2;
+                stateRef.current.projectiles.push({
+                  id: Math.random(),
+                  x: m.x + 60,
+                  y: m.y + 60,
+                  vx: Math.cos(angle) * 5,
+                  vy: Math.sin(angle) * 5,
+                  type: 'MONSTER_ORB',
+                  isMonster: true
+                });
+              }
+            } else if (skillRand < 0.7) {
+              // Skill 2: Summoning
+              for (let i = 0; i < 5; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                stateRef.current.monsters.push({
+                  id: Math.random(),
+                  x: m.x + Math.cos(angle) * 100,
+                  y: m.y + Math.sin(angle) * 100,
+                  health: 50,
+                  maxHealth: 50,
+                  type: 'ORC',
+                  stuckTime: 0,
+                  stuckDir: null,
+                  lastSkillTime: now
+                });
+              }
+              createParticles(m.x + 60, m.y + 60, '#991b1b', 15);
+            } else {
+              // Skill 3: Charge at player
+              m.isCharging = true;
+              const angle = Math.atan2(dy, dx);
+              m.chargeDir = { x: Math.cos(angle), y: Math.sin(angle) };
+              setTimeout(() => {
+                m.isCharging = false;
+              }, 1500);
+            }
+          }
+          
+          if (m.isCharging) mSpeed *= 3;
         }
 
-        if (dist > 5) {
-          const mvX = (dx / dist) * mSpeed;
-          const mvY = (dy / dist) * mSpeed;
-          const canX = !['WALL', 'MOUNTAIN'].includes(getTileAt(m.x + mvX + MONSTER_SIZE / 2, m.y + MONSTER_SIZE / 2));
-          const canY = !['WALL', 'MOUNTAIN'].includes(getTileAt(m.x + MONSTER_SIZE / 2, m.y + mvY + MONSTER_SIZE / 2));
+        // Apply Movement
+        if (dist > 5 || ((m.type === 'CHARGER' || m.type === 'BOSS') && m.isCharging)) {
+          let mvX, mvY;
+          if ((m.type === 'CHARGER' || m.type === 'BOSS') && m.isCharging && m.chargeDir) {
+            mvX = m.chargeDir.x * mSpeed;
+            mvY = m.chargeDir.y * mSpeed;
+          } else {
+            mvX = (dx / dist) * mSpeed;
+            mvY = (dy / dist) * mSpeed;
+          }
+
+          const mSize = m.type === 'BOSS' ? 120 : MONSTER_SIZE;
+          const canX = !['WALL', 'MOUNTAIN'].includes(getTileAt(m.x + mvX + mSize / 2, m.y + mSize / 2));
+          const canY = !['WALL', 'MOUNTAIN'].includes(getTileAt(m.x + mSize / 2, m.y + mvY + mSize / 2));
+          
           if (canX) m.x += mvX;
           if (canY) m.y += mvY;
         }
 
-        // Monster Combat
+        // Damage Player
+        const collisionDist = (m.type === 'BOSS' ? 80 : PLAYER_SIZE) * (m.size || 1);
+        if (dist < collisionDist && !m.invisible) {
+          const damage = m.type === 'BOSS' ? 2 : (m.type === 'CHARGER' && m.isCharging ? 1.5 : 0.5);
+          stateRef.current.playerHealth -= damage;
+          if (m.type === 'BOSS') stateRef.current.screenShake = Math.max(stateRef.current.screenShake, 5);
+          setPlayerHealth(Math.max(0, Math.floor(stateRef.current.playerHealth)));
+          if (stateRef.current.playerHealth <= 0) setGameOver(true);
+        }
+
+        // Monster Combat (Sword)
         if (stateRef.current.isAttacking && currentWeapon === 'SWORD') {
-          const mCenterX = m.x + (m.type === 'BOSS' ? 60 : MONSTER_SIZE / 2);
-          const mCenterY = m.y + (m.type === 'BOSS' ? 60 : MONSTER_SIZE / 2);
+          const mSize = (m.type === 'BOSS' ? 120 : MONSTER_SIZE) * (m.size || 1);
+          const mCenterX = m.x + mSize / 2;
+          const mCenterY = m.y + mSize / 2;
           const pCenterX = playerPos.x + PLAYER_SIZE / 2;
           const pCenterY = playerPos.y + PLAYER_SIZE / 2;
           const distToP = Math.sqrt((mCenterX - pCenterX) ** 2 + (mCenterY - pCenterY) ** 2);
-          if (distToP < 80) {
-            m.health -= 5;
+          if (distToP < 80 * stats.range + mSize / 2) {
+            m.health -= 5 * stats.damage;
             createParticles(mCenterX, mCenterY, '#e74c3c', 2);
           }
         }
-
-        stateRef.current.projectiles.forEach(p => {
-          if (!p.isMonster) {
-            const mSize = m.type === 'BOSS' ? 120 : MONSTER_SIZE;
-            const distToProj = Math.sqrt((p.x - (m.x + mSize / 2)) ** 2 + (p.y - (m.y + mSize / 2)) ** 2);
-            if (distToProj < mSize / 2 + 5) {
-              m.health -= p.type === 'ARROW' ? 15 : 10;
-              p.dead = true;
-              createParticles(p.x, p.y, '#e74c3c', 3);
-            }
-          }
-        });
       });
 
-      // Death & XP
+      // Projectile-Monster Collision using Spatial Grid
+      playerProjectiles.forEach(p => {
+        if (p.dead) return;
+        const gx = Math.floor(p.x / GRID_SIZE);
+        const gy = Math.floor(p.y / GRID_SIZE);
+        for (let i = -1; i <= 1; i++) {
+          for (let j = -1; j <= 1; j++) {
+            const key = `${gx + i},${gy + j}`;
+            const cell = monsterGrid[key];
+            if (cell) {
+              for (const m of cell) {
+                if (p.dead) break;
+                const baseSize = m.type === 'BOSS' ? 120 : MONSTER_SIZE;
+                const mSize = baseSize * (m.size || 1);
+                const mCenterX = m.x + mSize / 2;
+                const mCenterY = m.y + mSize / 2;
+                const distToProjSq = (p.x - mCenterX) ** 2 + (p.y - mCenterY) ** 2;
+                const collisionDist = mSize / 2 + 5;
+                if (distToProjSq < collisionDist * collisionDist) {
+                  let damage = (p.type === 'ARROW' ? 15 : 10) * stats.damage;
+                  if (m.type === 'SHIELDBEARER') damage *= 0.5;
+                  m.health -= damage;
+                  p.dead = true;
+                  createParticles(p.x, p.y, m.type === 'SHIELDBEARER' ? '#94a3b8' : '#e74c3c', 3);
+                }
+              }
+            }
+          }
+        }
+      });
+
+      // Death & XP & Despawning
       stateRef.current.monsters = stateRef.current.monsters.filter(m => {
+        const dx = m.x - playerPos.x;
+        const dy = m.y - playerPos.y;
+        const distSq = dx * dx + dy * dy;
+
+        // Despawn if too far (3x frame roughly)
+        if (distSq > DESPAWN_DIST * DESPAWN_DIST) {
+          if (m.type === 'BOSS') {
+            stateRef.current.bossSpawned = false;
+            setBossSpawned(false);
+          }
+          return false;
+        }
+
         if (m.health <= 0) {
-          const xpGain = m.type === 'BOSS' ? 500 : 20;
-          stateRef.current.xp += xpGain;
-          stateRef.current.score += xpGain * 10;
+          // Splitting logic
+          if (m.type === 'SPLITTER' && (m.size || 1) > 0.5) {
+            const newSize = (m.size || 1) * 0.6;
+            for (let i = 0; i < 2; i++) {
+              stateRef.current.monsters.push({
+                id: Math.random(),
+                x: m.x + (Math.random() - 0.5) * 20,
+                y: m.y + (Math.random() - 0.5) * 20,
+                health: 20,
+                maxHealth: 20,
+                type: 'SPLITTER',
+                size: newSize,
+                stuckTime: 0,
+                stuckDir: null,
+                lastSkillTime: Date.now()
+              });
+            }
+          }
+          const scoreGain = m.type === 'BOSS' ? 1000 : 10;
+          stateRef.current.score += scoreGain;
           setScore(stateRef.current.score);
-          setXp(stateRef.current.xp);
+
+          // Drop XP
+          stateRef.current.items.push({
+            id: Math.random(),
+            x: m.x + (m.type === 'BOSS' ? 60 : MONSTER_SIZE / 2),
+            y: m.y + (m.type === 'BOSS' ? 60 : MONSTER_SIZE / 2),
+            type: 'XP',
+            value: m.type === 'BOSS' ? 500 : (m.type === 'SPLITTER' ? 10 : 25)
+          });
+
+          // Rare Health drop
+          if (Math.random() < 0.1 || m.type === 'BOSS') {
+            stateRef.current.items.push({
+              id: Math.random(),
+              x: m.x,
+              y: m.y,
+              type: 'HEALTH',
+              value: 20
+            });
+          }
+
           if (m.type === 'BOSS') {
             stateRef.current.bossSpawned = false;
             setBossSpawned(false);
@@ -495,13 +1048,7 @@ export default function App() {
         return true;
       });
 
-      // Level Up
-      if (stateRef.current.xp >= stateRef.current.level * 100) {
-        stateRef.current.xp -= stateRef.current.level * 100;
-        stateRef.current.level++;
-        setLevel(stateRef.current.level);
-        setXp(stateRef.current.xp);
-      }
+      // Level Up (already handled in items collection)
 
       // Particles
       stateRef.current.particles = particles.filter(p => {
@@ -531,15 +1078,46 @@ export default function App() {
     if (!isGameRunning || gameOver) return;
     const spawnTimer = setInterval(() => {
       const { playerPos, monsters } = stateRef.current;
-      if (monsters.length < 25) {
+      if (monsters.length < MAX_MONSTERS) {
         const angle = Math.random() * Math.PI * 2;
         const dist = 600;
         const x = playerPos.x + Math.cos(angle) * dist;
         const y = playerPos.y + Math.sin(angle) * dist;
         const tile = getTileAt(x, y);
         if (['GRASS', 'FOREST', 'JUNGLE', 'DESERT'].includes(tile)) {
-          const type: MonsterType = Math.random() < 0.2 ? 'ORC' : 'SLIME';
-          const health = type === 'ORC' ? 80 : 30;
+          const rand = Math.random();
+          let type: MonsterType = 'SLIME';
+          let health = 30;
+          
+          if (stateRef.current.level >= 12 && rand < 0.05) {
+            type = 'SHIELDBEARER';
+            health = 200;
+          } else if (stateRef.current.level >= 10 && rand < 0.1) {
+            type = 'GHOST';
+            health = 50;
+          } else if (stateRef.current.level >= 8 && rand < 0.1) {
+            type = 'EXPLODER';
+            health = 30;
+          } else if (stateRef.current.level >= 6 && rand < 0.15) {
+            type = 'SPLITTER';
+            health = 80;
+          } else if (stateRef.current.level >= 7 && rand < 0.2) {
+            type = 'SUMMONER';
+            health = 100;
+          } else if (stateRef.current.level >= 5 && rand < 0.3) {
+            type = 'HEALER';
+            health = 50;
+          } else if (stateRef.current.level >= 3 && rand < 0.45) {
+            type = 'CHARGER';
+            health = 60;
+          } else if (stateRef.current.level >= 2 && rand < 0.6) {
+            type = 'RANGED';
+            health = 40;
+          } else if (rand < 0.8) {
+            type = 'ORC';
+            health = 80;
+          }
+
           stateRef.current.monsters.push({
             id: Math.random(), x, y, health, maxHealth: health, type,
             stuckTime: 0, stuckDir: null, lastSkillTime: Date.now()
@@ -561,7 +1139,7 @@ export default function App() {
         const x = stateRef.current.playerPos.x + Math.cos(angle) * 700;
         const y = stateRef.current.playerPos.y + Math.sin(angle) * 700;
         stateRef.current.monsters.push({
-          id: 999, x, y, health: 1000, maxHealth: 1000, type: 'BOSS',
+          id: 999, x, y, health: 3000, maxHealth: 3000, type: 'BOSS',
           stuckTime: 0, stuckDir: null, lastSkillTime: Date.now()
         });
       }
@@ -591,18 +1169,30 @@ export default function App() {
     setScore(0);
     setLevel(1);
     setXp(0);
+    setShowLevelUp(false);
+    setStats({
+      maxHealth: 100,
+      maxStamina: 100,
+      damage: 1,
+      speed: 5,
+      attackSpeed: 1,
+      range: 1
+    });
     stateRef.current = {
       ...stateRef.current,
       playerPos: { x: 0, y: 0 },
       monsters: [],
       projectiles: [],
+      items: [],
       particles: [],
       playerHealth: 100,
+      playerStamina: 100,
       score: 0,
       xp: 0,
       level: 1,
       bossSpawned: false,
     };
+    setPlayerStamina(100);
   };
 
   return (
@@ -619,6 +1209,7 @@ export default function App() {
           }
         }}
         onMouseDown={handleAttack}
+        style={{ touchAction: 'none' }}
       >
         <Layer>
           {/* Terrain */}
@@ -634,69 +1225,31 @@ export default function App() {
           ))}
 
           {/* Items */}
-          {renderState.items.map(item => (
-            <Circle
-              key={item.id}
-              x={item.x - renderState.camera.x}
-              y={item.y - renderState.camera.y}
-              radius={8}
-              fill="#2ecc71"
-              shadowBlur={5}
-              shadowColor="#2ecc71"
-            />
-          ))}
+          <ItemRenderer 
+            items={renderState.items} 
+            camera={renderState.camera} 
+            playerPos={renderState.playerPos} 
+          />
 
           {/* Monsters */}
-          {renderState.monsters.map(m => (
-            <Group key={m.id} x={m.x - renderState.camera.x} y={m.y - renderState.camera.y}>
-              <Rect
-                width={m.type === 'BOSS' ? 120 : MONSTER_SIZE}
-                height={m.type === 'BOSS' ? 120 : MONSTER_SIZE}
-                fill={m.type === 'BOSS' ? '#991b1b' : (m.type === 'ORC' ? '#1e3a8a' : '#166534')}
-                cornerRadius={4}
-                stroke="#000"
-                strokeWidth={2}
-              />
-              {/* Health Bar */}
-              <Rect
-                y={-10}
-                width={m.type === 'BOSS' ? 120 : MONSTER_SIZE}
-                height={4}
-                fill="#333"
-              />
-              <Rect
-                y={-10}
-                width={(m.type === 'BOSS' ? 120 : MONSTER_SIZE) * (m.health / m.maxHealth)}
-                height={4}
-                fill="#e74c3c"
-              />
-            </Group>
-          ))}
+          <MonsterRenderer 
+            monsters={renderState.monsters} 
+            camera={renderState.camera} 
+            playerPos={renderState.playerPos} 
+          />
 
           {/* Projectiles */}
-          {renderState.projectiles.map(p => (
-            <Circle
-              key={p.id}
-              x={p.x - renderState.camera.x}
-              y={p.y - renderState.camera.y}
-              radius={p.type === 'ARROW' ? 3 : 4}
-              fill={p.isMonster ? '#9b59b6' : (p.type === 'ARROW' ? '#f1c40f' : '#ecf0f1')}
-              shadowBlur={3}
-              shadowColor={p.isMonster ? '#9b59b6' : '#fff'}
-            />
-          ))}
+          <ProjectileRenderer 
+            projectiles={renderState.projectiles} 
+            camera={renderState.camera} 
+            playerPos={renderState.playerPos} 
+          />
 
           {/* Particles */}
-          {renderState.particles.map(p => (
-            <Circle
-              key={p.id}
-              x={p.x - renderState.camera.x}
-              y={p.y - renderState.camera.y}
-              radius={2 * p.life}
-              fill={p.color}
-              opacity={p.life}
-            />
-          ))}
+          <ParticleRenderer 
+            particles={renderState.particles} 
+            camera={renderState.camera} 
+          />
 
           {/* Player */}
           <Group x={renderState.playerPos.x - renderState.camera.x} y={renderState.playerPos.y - renderState.camera.y}>
@@ -731,15 +1284,28 @@ export default function App() {
       <div className="absolute top-0 left-0 w-full p-6 pointer-events-none flex justify-between items-start">
         <div className="flex flex-col gap-4">
           {/* Health Bar */}
-          <div className="w-64 h-6 bg-gray-900/80 rounded-full border-2 border-white/20 overflow-hidden backdrop-blur-md">
+          <div className="relative w-64 h-6 bg-gray-900/80 rounded-full border-2 border-white/20 overflow-hidden backdrop-blur-md">
             <motion.div 
               className="h-full bg-gradient-to-r from-red-600 to-red-400"
               initial={{ width: '100%' }}
-              animate={{ width: `${playerHealth}%` }}
+              animate={{ width: `${(playerHealth / stats.maxHealth) * 100}%` }}
               transition={{ type: 'spring', bounce: 0, duration: 0.3 }}
             />
-            <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold uppercase tracking-widest">
+            <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold uppercase tracking-widest text-white">
               <Heart className="w-3 h-3 mr-1 fill-white" /> {Math.ceil(playerHealth)} HP
+            </div>
+          </div>
+
+          {/* Stamina Bar */}
+          <div className="relative w-48 h-3 bg-gray-900/80 rounded-full border border-white/10 overflow-hidden backdrop-blur-md">
+            <motion.div 
+              className={`h-full bg-gradient-to-r ${playerStamina < 10 ? 'from-red-500 to-red-400' : 'from-yellow-500 to-yellow-300'}`}
+              initial={{ width: '100%' }}
+              animate={{ width: `${(playerStamina / stats.maxStamina) * 100}%` }}
+              transition={{ type: 'spring', bounce: 0, duration: 0.3 }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center text-[8px] font-bold uppercase tracking-widest text-white/80">
+              <Zap className={`w-2 h-2 mr-1 ${playerStamina < 10 ? 'fill-red-500' : 'fill-white'}`} /> {Math.ceil(playerStamina)} STAMINA
             </div>
           </div>
 
@@ -763,7 +1329,7 @@ export default function App() {
         </div>
 
         {/* Weapon Selector */}
-        <div className="flex gap-2 pointer-events-auto">
+        <div className={`flex gap-2 pointer-events-auto ${isMobile ? 'scale-125 origin-top-right' : ''}`}>
           {(['SWORD', 'BOW', 'GUN'] as WeaponType[]).map((w, i) => (
             <button
               key={w}
@@ -783,6 +1349,100 @@ export default function App() {
         </div>
       </div>
 
+      {/* Mobile Controls */}
+      {isMobile && isGameRunning && !gameOver && (
+        <div className="absolute inset-0 pointer-events-none z-[80]">
+          {/* Joystick Area */}
+          <div 
+            className="absolute bottom-12 left-12 w-40 h-40 bg-white/5 rounded-full border border-white/10 pointer-events-auto flex items-center justify-center select-none touch-none"
+            onTouchStart={(e) => {
+              e.preventDefault();
+              const touch = e.touches[0];
+              const rect = e.currentTarget.getBoundingClientRect();
+              const centerX = rect.left + rect.width / 2;
+              const centerY = rect.top + rect.height / 2;
+              setJoystick({ active: true, x: 0, y: 0, startX: centerX, startY: centerY, currentX: touch.clientX, currentY: touch.clientY });
+            }}
+            onTouchMove={(e) => {
+              e.preventDefault();
+              if (!joystick.active) return;
+              const touch = e.touches[0];
+              const dx = touch.clientX - joystick.startX;
+              const dy = touch.clientY - joystick.startY;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              const maxDist = 60;
+              const normalizedDx = dx / Math.max(dist, 1);
+              const normalizedDy = dy / Math.max(dist, 1);
+              const finalDist = Math.min(dist, maxDist);
+              
+              stateRef.current.joystick = {
+                x: normalizedDx * (finalDist / maxDist),
+                y: normalizedDy * (finalDist / maxDist)
+              };
+              setJoystick(prev => ({ ...prev, currentX: touch.clientX, currentY: touch.clientY }));
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              setJoystick({ active: false, x: 0, y: 0, startX: 0, startY: 0, currentX: 0, currentY: 0 });
+              stateRef.current.joystick = { x: 0, y: 0 };
+            }}
+          >
+            <div className="w-16 h-16 bg-white/10 rounded-full border border-white/20 flex items-center justify-center">
+              {joystick.active && (
+                <motion.div 
+                  className="w-10 h-10 bg-blue-500 rounded-full shadow-lg shadow-blue-500/50"
+                  style={{
+                    x: Math.min(Math.max(joystick.currentX - joystick.startX, -60), 60),
+                    y: Math.min(Math.max(joystick.currentY - joystick.startY, -60), 60),
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="absolute bottom-12 right-12 flex flex-col gap-4 pointer-events-auto items-end select-none touch-none">
+            <div className="flex gap-4 items-end">
+              <button 
+                className="w-16 h-16 bg-blue-600/80 rounded-full border-2 border-white/20 flex items-center justify-center active:scale-90 transition-transform shadow-xl touch-none"
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  const weapons: WeaponType[] = ['SWORD', 'BOW', 'GUN'];
+                  const nextIdx = (weapons.indexOf(currentWeapon) + 1) % weapons.length;
+                  setCurrentWeapon(weapons[nextIdx]);
+                }}
+              >
+                <RefreshCw className="w-8 h-8 text-white" />
+              </button>
+              <button 
+                className="w-24 h-24 bg-red-600/80 rounded-full border-4 border-white/20 flex items-center justify-center active:scale-90 transition-transform shadow-xl touch-none"
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  handleAttack();
+                }}
+              >
+                <Sword className="w-12 h-12 text-white" />
+              </button>
+            </div>
+            <div className="flex gap-4">
+              <button 
+                className={`w-16 h-16 rounded-full border-2 flex items-center justify-center active:scale-90 transition-transform touch-none ${stateRef.current.playerStamina >= 10 ? 'bg-yellow-500/80 border-white/20' : 'bg-gray-800/80 border-white/10 opacity-50'}`}
+                onTouchStart={(e) => { 
+                  e.preventDefault();
+                  stateRef.current.keys['sprint'] = true; 
+                }}
+                onTouchEnd={(e) => { 
+                  e.preventDefault();
+                  stateRef.current.keys['sprint'] = false; 
+                }}
+              >
+                <Zap className="w-8 h-8 text-white" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Boss Warning */}
       <AnimatePresence>
         {bossSpawned && (
@@ -798,9 +1458,63 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Level Up Screen */}
+      <AnimatePresence>
+        {showLevelUp && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/80 backdrop-blur-xl flex items-center justify-center z-[110]"
+          >
+            <div className="max-w-md w-full p-8 text-center space-y-8">
+              <div className="space-y-2">
+                <h2 className="text-4xl font-black italic tracking-tighter uppercase text-blue-400">Level Up!</h2>
+                <p className="text-gray-400 font-mono text-xs tracking-widest uppercase">Choose an Upgrade</p>
+              </div>
+
+              <div className="grid gap-4">
+                {upgrades.map((upgrade) => (
+                  <motion.button
+                    key={upgrade}
+                    whileHover={{ scale: 1.02, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => {
+                      setStats(prev => {
+                        const next = { ...prev };
+                        if (upgrade === 'Increase Max Health') {
+                          next.maxHealth += 20;
+                          stateRef.current.playerHealth += 20;
+                          setPlayerHealth(stateRef.current.playerHealth);
+                        }
+                        if (upgrade === 'Increase Max Stamina') {
+                          next.maxStamina += 50;
+                          stateRef.current.playerStamina += 50;
+                          setPlayerStamina(stateRef.current.playerStamina);
+                        }
+                        if (upgrade === 'Increase Damage') next.damage += 0.5;
+                        if (upgrade === 'Increase Speed') next.speed += 0.5;
+                        if (upgrade === 'Increase Attack Speed') next.attackSpeed += 0.2;
+                        if (upgrade === 'Increase Attack Range') next.range += 0.2;
+                        return next;
+                      });
+                      setShowLevelUp(false);
+                      setIsGameRunning(true);
+                    }}
+                    className="w-full p-4 bg-white/5 border border-white/10 rounded-xl text-left flex items-center justify-between group"
+                  >
+                    <span className="font-bold uppercase tracking-wider text-sm">{upgrade}</span>
+                    <Play className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </motion.button>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/* Start Screen */}
       <AnimatePresence>
-        {!isGameRunning && (
+        {!isGameRunning && !showLevelUp && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -826,6 +1540,13 @@ export default function App() {
                     <span className="text-[10px] font-bold uppercase">Movement</span>
                   </div>
                   <p className="text-xs text-gray-400">WASD or Arrow Keys to explore the infinite forest.</p>
+                </div>
+                <div className="bg-white/5 p-4 rounded-xl border border-white/10">
+                  <div className="flex items-center gap-2 text-yellow-400 mb-2">
+                    <Zap className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase">Sprint</span>
+                  </div>
+                  <p className="text-xs text-gray-400">Hold SHIFT to run faster. Consumes stamina.</p>
                 </div>
                 <div className="bg-white/5 p-4 rounded-xl border border-white/10">
                   <div className="flex items-center gap-2 text-red-400 mb-2">

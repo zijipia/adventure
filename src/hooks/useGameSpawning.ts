@@ -28,13 +28,14 @@ export const useGameSpawning = ({
   useEffect(() => {
     if (!isGameRunning || gameOver) return;
     const spawnTimer = setInterval(() => {
-      const { playerPos, monsters, level } = stateRef.current;
+      const { playerPos, monsters, level, dungeon } = stateRef.current;
+      if (dungeon?.active) return;
       if (monsters.length < MAX_MONSTERS) {
         const angle = Math.random() * Math.PI * 2;
         const dist = 600;
         const x = playerPos.x + Math.cos(angle) * dist;
         const y = playerPos.y + Math.sin(angle) * dist;
-        const tile = getTileAt(x, y, chunksRef);
+        const tile = getTileAt(x, y, chunksRef, stateRef);
         if (['GRASS', 'FOREST', 'JUNGLE', 'DESERT'].includes(tile)) {
           const rand = Math.random();
           let type: MonsterType = 'SLIME';
@@ -83,7 +84,8 @@ export const useGameSpawning = ({
   useEffect(() => {
     if (!isGameRunning || gameOver || stateRef.current.bossSpawned) return;
     const bossTimer = setInterval(() => {
-      const { score, bossSpawned: bSpawned, playerPos } = stateRef.current;
+      const { score, bossSpawned: bSpawned, playerPos, dungeon } = stateRef.current;
+      if (dungeon?.active) return;
       if (score > 0 && score % 2000 < 100 && !bSpawned) {
         stateRef.current.bossSpawned = true;
         setBossSpawned(true);

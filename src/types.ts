@@ -5,7 +5,7 @@
 
 export type WeaponType = 'SWORD' | 'BOW' | 'GUN';
 
-export type TileType = 'GRASS' | 'WALL' | 'MOUNTAIN' | 'BOSS_FLOOR' | 'WATER' | 'SAFE_ZONE' | 'DESERT' | 'FOREST' | 'OCEAN' | 'SNOW' | 'LAVA' | 'JUNGLE' | 'BEACH' | 'RIVER';
+export type TileType = 'GRASS' | 'WALL' | 'MOUNTAIN' | 'BOSS_FLOOR' | 'WATER' | 'SAFE_ZONE' | 'DESERT' | 'FOREST' | 'OCEAN' | 'SNOW' | 'LAVA' | 'JUNGLE' | 'BEACH' | 'RIVER' | 'DUNGEON_FLOOR' | 'DUNGEON_WALL' | 'DUNGEON_ENTRANCE';
 
 export interface Item {
   id: number;

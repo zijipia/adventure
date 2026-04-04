@@ -31,6 +31,8 @@ import { LevelUpScreen } from './components/ui/LevelUpScreen';
 import { StartScreen } from './components/ui/StartScreen';
 import { GameOverScreen } from './components/ui/GameOverScreen';
 import { BossWarning } from './components/ui/BossWarning';
+import { DungeonStatus } from './components/ui/DungeonStatus';
+import { Minimap } from './components/ui/Minimap';
 import { useGameLoop } from './hooks/useGameLoop';
 import { useGameSpawning } from './hooks/useGameSpawning';
 import { useInput } from './hooks/useInput';
@@ -85,6 +87,17 @@ export default function App() {
     keys: {} as { [key: string]: boolean },
     joystick: { x: 0, y: 0 },
     aimJoystick: { x: 0, y: 0, active: false },
+    dungeon: {
+      active: false,
+      center: { x: 0, y: 0 },
+      monsterIds: [] as number[],
+      radius: 400,
+      preDungeonPos: { x: 0, y: 0 } as Position | null,
+      lastDungeonTime: 0,
+      entranceChunk: null as { cx: number, cy: number } | null,
+      maze: null as boolean[][] | null
+    },
+    clearedDungeons: new Set<string>()
   });
 
   // State for rendering (updated via requestAnimationFrame)
@@ -96,6 +109,11 @@ export default function App() {
     particles: [] as Particle[],
     camera: { x: 0, y: 0 },
     isAttacking: false,
+    dungeon: {
+      active: false,
+      monsterCount: 0,
+      maze: null as boolean[][] | null
+    }
   });
 
   const handleAttack = useCallback(() => {
@@ -198,7 +216,7 @@ export default function App() {
 
     for (let cx = startCX; cx <= endCX; cx++) {
       for (let cy = startCY; cy <= endCY; cy++) {
-        chunks.push({ cx, cy, chunk: getChunk(cx, cy, chunksRef) });
+        chunks.push({ cx, cy, chunk: getChunk(cx, cy, chunksRef, stateRef) });
       }
     }
     return chunks;
@@ -341,6 +359,20 @@ export default function App() {
 
       {/* Boss Warning */}
       <BossWarning bossSpawned={bossSpawned} />
+
+      {/* Dungeon Status */}
+      <DungeonStatus 
+        active={renderState.dungeon.active} 
+        monsterCount={renderState.dungeon.monsterCount} 
+      />
+
+      {/* Minimap */}
+      <Minimap 
+        playerPos={renderState.playerPos} 
+        monsters={renderState.monsters} 
+        inDungeon={renderState.dungeon.active} 
+        maze={renderState.dungeon.maze}
+      />
 
       {/* Level Up Screen */}
       <LevelUpScreen 

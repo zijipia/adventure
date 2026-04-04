@@ -7,12 +7,12 @@ import { useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import { 
   PLAYER_SIZE, MONSTER_SIZE, PROJECTILE_SPEED, DESPAWN_DIST, 
-  MONSTER_SPEED, GRID_SIZE 
+  MONSTER_SPEED, GRID_SIZE, CHUNK_PIXELS, CHUNK_SIZE, INITIAL_WORLD_SEED 
 } from '../constants';
 import { 
-  getTileAt, getRandomUpgrades, createParticles, checkCollision 
+  getTileAt, getRandomUpgrades, createParticles, checkCollision, redrawChunkCanvas, generateDungeonMaze 
 } from '../utils/gameUtils';
-import { GameStats, WeaponType } from '../types';
+import { GameStats, WeaponType, MonsterType } from '../types';
 
 interface GameLoopProps {
   isGameRunning: boolean;
@@ -67,7 +67,7 @@ export const useGameLoop = ({
       // Player Movement
       let moveX = 0;
       let moveY = 0;
-      const tileAtPlayer = getTileAt(playerPos.x + PLAYER_SIZE / 2, playerPos.y + PLAYER_SIZE / 2, chunksRef);
+      const tileAtPlayer = getTileAt(playerPos.x + PLAYER_SIZE / 2, playerPos.y + PLAYER_SIZE / 2, chunksRef, stateRef);
       
       if (tileAtPlayer === 'SAFE_ZONE') {
         stateRef.current.playerHealth = Math.min(100, stateRef.current.playerHealth + 0.05);
@@ -115,14 +115,138 @@ export const useGameLoop = ({
       }
 
       const nextPos = { ...playerPos };
-      if (!checkCollision(playerPos.x + moveX, playerPos.y, chunksRef)) nextPos.x += moveX;
-      if (!checkCollision(playerPos.x, playerPos.y + moveY, chunksRef)) nextPos.y += moveY;
+      if (!checkCollision(playerPos.x + moveX, playerPos.y, chunksRef, stateRef)) nextPos.x += moveX;
+      if (!checkCollision(playerPos.x, playerPos.y + moveY, chunksRef, stateRef)) nextPos.y += moveY;
+
+      // Dungeon Logic
+      const { dungeon } = stateRef.current;
+      const now = Date.now();
+      if (tileAtPlayer === 'DUNGEON_ENTRANCE' && !dungeon.active && now - dungeon.lastDungeonTime > 5000) {
+        // Start Dungeon
+        const preDungeonPos = { ...nextPos };
+        const dungeonPos = { x: 1000 * CHUNK_PIXELS + CHUNK_PIXELS / 2, y: 1000 * CHUNK_PIXELS + CHUNK_PIXELS / 2 };
+        
+        const cx = Math.floor(nextPos.x / CHUNK_PIXELS);
+        const cy = Math.floor(nextPos.y / CHUNK_PIXELS);
+        
+        // Generate a connected maze for this dungeon
+        const mazeSeed = Math.abs((cx * 73856093) ^ (cy * 19349663) ^ INITIAL_WORLD_SEED);
+        const maze = generateDungeonMaze(mazeSeed);
+
+        stateRef.current.dungeon = {
+          ...stateRef.current.dungeon,
+          active: true,
+          center: { x: dungeonPos.x, y: dungeonPos.y },
+          monsterIds: [],
+          radius: 1500,
+          preDungeonPos,
+          entranceChunk: { cx, cy },
+          maze
+        };
+        
+        nextPos.x = dungeonPos.x;
+        nextPos.y = dungeonPos.y;
+
+        // Spawn Dungeon Monsters
+        const monsterTypes: MonsterType[] = ['ORC', 'RANGED', 'CHARGER', 'EXPLODER', 'SHIELDBEARER'];
+        let spawnedCount = 0;
+        let attempts = 0;
+        while (spawnedCount < 20 && attempts < 100) {
+          attempts++;
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 100 + Math.random() * 800;
+          const mx = nextPos.x + Math.cos(angle) * dist;
+          const my = nextPos.y + Math.sin(angle) * dist;
+          
+          const tile = getTileAt(mx, my, chunksRef, stateRef);
+          if (tile === 'DUNGEON_FLOOR') {
+            const id = Math.random();
+            const type = monsterTypes[Math.floor(Math.random() * monsterTypes.length)];
+            const health = type === 'SHIELDBEARER' ? 200 : 100;
+            
+            stateRef.current.monsters.push({
+              id, x: mx, y: my, health, maxHealth: health, type,
+              stuckTime: 0, stuckDir: null, lastSkillTime: Date.now()
+            });
+            stateRef.current.dungeon.monsterIds.push(id);
+            spawnedCount++;
+          }
+        }
+        createParticles(nextPos.x, nextPos.y, '#7c3aed', 50, stateRef.current.particles);
+        stateRef.current.screenShake = 20;
+      }
+
+      if (dungeon.active) {
+        // Contain player
+        const dx = nextPos.x - dungeon.center.x;
+        const dy = nextPos.y - dungeon.center.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > dungeon.radius) {
+          nextPos.x = dungeon.center.x + (dx / dist) * dungeon.radius;
+          nextPos.y = dungeon.center.y + (dy / dist) * dungeon.radius;
+        }
+
+        // Check if dungeon is cleared
+        const aliveDungeonMonsters = stateRef.current.monsters.filter((m: any) => 
+          stateRef.current.dungeon.monsterIds.includes(m.id)
+        );
+        stateRef.current.dungeon.monsterIds = aliveDungeonMonsters.map((m: any) => m.id);
+        
+        if (stateRef.current.dungeon.monsterIds.length === 0) {
+          stateRef.current.dungeon.active = false;
+          stateRef.current.dungeon.lastDungeonTime = Date.now();
+          
+          // Clear dungeon from world
+          if (dungeon.entranceChunk) {
+            const key = `${dungeon.entranceChunk.cx},${dungeon.entranceChunk.cy}`;
+            stateRef.current.clearedDungeons.add(key);
+            const chunk = chunksRef.current.get(key);
+            if (chunk) {
+              // Replace dungeon tiles with grass
+              for (let y = 0; y < CHUNK_SIZE; y++) {
+                for (let x = 0; x < CHUNK_SIZE; x++) {
+                  const t = chunk.tiles[y][x];
+                  if (t === 'DUNGEON_ENTRANCE' || t === 'DUNGEON_FLOOR' || t === 'DUNGEON_WALL') {
+                    chunk.tiles[y][x] = 'GRASS';
+                  }
+                }
+              }
+              redrawChunkCanvas(chunk);
+            }
+          }
+
+          confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+          createParticles(nextPos.x, nextPos.y, '#10b981', 50, stateRef.current.particles);
+          stateRef.current.screenShake = 10;
+          
+          // Return to real world
+          if (dungeon.preDungeonPos) {
+            nextPos.x = dungeon.preDungeonPos.x;
+            nextPos.y = dungeon.preDungeonPos.y + 100; // Offset slightly to avoid re-entry
+          }
+
+          // Reward: Level Up Screen
+          setUpgrades(getRandomUpgrades(3));
+          setShowLevelUp(true);
+          setIsGameRunning(false);
+        }
+      }
+
       stateRef.current.playerPos = nextPos;
 
       // Camera
+      let shakeX = 0;
+      let shakeY = 0;
+      if (stateRef.current.screenShake > 0) {
+        shakeX = (Math.random() - 0.5) * stateRef.current.screenShake;
+        shakeY = (Math.random() - 0.5) * stateRef.current.screenShake;
+        stateRef.current.screenShake *= 0.9;
+        if (stateRef.current.screenShake < 0.1) stateRef.current.screenShake = 0;
+      }
+
       stateRef.current.camera = {
-        x: nextPos.x - viewport.width / 2 + PLAYER_SIZE / 2,
-        y: nextPos.y - viewport.height / 2 + PLAYER_SIZE / 2,
+        x: nextPos.x - viewport.width / 2 + PLAYER_SIZE / 2 + shakeX,
+        y: nextPos.y - viewport.height / 2 + PLAYER_SIZE / 2 + shakeY,
       };
 
       // Attack
@@ -139,8 +263,8 @@ export const useGameLoop = ({
       stateRef.current.projectiles = projectiles.filter((p: any) => {
         p.x += p.vx;
         p.y += p.vy;
-        const t = getTileAt(p.x, p.y, chunksRef);
-        if (t === 'WALL' || t === 'MOUNTAIN') return false;
+        const t = getTileAt(p.x, p.y, chunksRef, stateRef);
+        if (t === 'WALL' || t === 'MOUNTAIN' || t === 'DUNGEON_WALL') return false;
         if (p.isMonster) {
           const dist = Math.sqrt((p.x - (playerPos.x + PLAYER_SIZE / 2)) ** 2 + (p.y - (playerPos.y + PLAYER_SIZE / 2)) ** 2);
           if (dist < PLAYER_SIZE / 2 + 5) {
@@ -151,13 +275,13 @@ export const useGameLoop = ({
             return false;
           }
         }
-        return Math.sqrt((p.x - playerPos.x) ** 2 + (p.y - playerPos.y) ** 2) < 1000;
+        return Math.sqrt((p.x - stateRef.current.playerPos.x) ** 2 + (p.y - stateRef.current.playerPos.y) ** 2) < 1000;
       });
 
       // Items
       stateRef.current.items = stateRef.current.items.filter((item: any) => {
-        const dx = playerPos.x - item.x;
-        const dy = playerPos.y - item.y;
+        const dx = stateRef.current.playerPos.x - item.x;
+        const dy = stateRef.current.playerPos.y - item.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         
         if (dist < 30) {
@@ -204,8 +328,8 @@ export const useGameLoop = ({
       });
 
       stateRef.current.monsters.forEach((m: any) => {
-        const dx = playerPos.x - m.x;
-        const dy = playerPos.y - m.y;
+        const dx = stateRef.current.playerPos.x - m.x;
+        const dy = stateRef.current.playerPos.y - m.y;
         const distSq = dx * dx + dy * dy;
         
         // Culling: Skip update for far-away monsters (1000^2 = 1,000,000)
@@ -390,8 +514,8 @@ export const useGameLoop = ({
           }
 
           const mSize = m.type === 'BOSS' ? 120 : MONSTER_SIZE;
-          const canX = !['WALL', 'MOUNTAIN'].includes(getTileAt(m.x + mvX + mSize / 2, m.y + mSize / 2, chunksRef));
-          const canY = !['WALL', 'MOUNTAIN'].includes(getTileAt(m.x + mSize / 2, m.y + mvY + mSize / 2, chunksRef));
+          const canX = !['WALL', 'MOUNTAIN', 'DUNGEON_WALL'].includes(getTileAt(m.x + mvX + mSize / 2, m.y + mSize / 2, chunksRef, stateRef));
+          const canY = !['WALL', 'MOUNTAIN', 'DUNGEON_WALL'].includes(getTileAt(m.x + mSize / 2, m.y + mvY + mSize / 2, chunksRef, stateRef));
           
           if (canX) m.x += mvX;
           if (canY) m.y += mvY;
@@ -412,8 +536,8 @@ export const useGameLoop = ({
           const mSize = (m.type === 'BOSS' ? 120 : MONSTER_SIZE) * (m.size || 1);
           const mCenterX = m.x + mSize / 2;
           const mCenterY = m.y + mSize / 2;
-          const pCenterX = playerPos.x + PLAYER_SIZE / 2;
-          const pCenterY = playerPos.y + PLAYER_SIZE / 2;
+          const pCenterX = stateRef.current.playerPos.x + PLAYER_SIZE / 2;
+          const pCenterY = stateRef.current.playerPos.y + PLAYER_SIZE / 2;
           const distToP = Math.sqrt((mCenterX - pCenterX) ** 2 + (mCenterY - pCenterY) ** 2);
           if (distToP < 80 * stats.range + mSize / 2) {
             m.health -= 5 * stats.damage;
@@ -455,8 +579,8 @@ export const useGameLoop = ({
 
       // Death & XP & Despawning
       stateRef.current.monsters = stateRef.current.monsters.filter((m: any) => {
-        const dx = m.x - playerPos.x;
-        const dy = m.y - playerPos.y;
+        const dx = m.x - stateRef.current.playerPos.x;
+        const dy = m.y - stateRef.current.playerPos.y;
         const distSq = dx * dx + dy * dy;
 
         // Despawn if too far (3x frame roughly)
@@ -534,6 +658,11 @@ export const useGameLoop = ({
         particles: [...stateRef.current.particles],
         camera: { ...stateRef.current.camera },
         isAttacking: stateRef.current.isAttacking,
+        dungeon: {
+          active: stateRef.current.dungeon.active,
+          monsterCount: stateRef.current.dungeon.monsterIds.length,
+          maze: stateRef.current.dungeon.maze
+        }
       });
 
       animationFrameId = requestAnimationFrame(update);
